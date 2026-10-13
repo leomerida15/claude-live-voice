@@ -45,11 +45,14 @@ claude --plugin-dir /path/to/claude-live-voice
 | `/live` | Turns live mode on or off. |
 | `/live on` / `/live off` | Starts or stops live mode. `off` also stops playback. |
 | `/live mute` | Mutes or unmutes the microphone. Replies are still spoken. |
-| `/live voice <name>` | Changes the Kokoro voice, for example `ef_dora` or `em_alex`. |
+| `/live voice <name>` | Changes the Kokoro voice, for example `ef_dora` or `em_alex`, and keeps it. |
 | `/live status` | Shows the current state, the voice and the queue. |
-| `/live config` | Opens a small dialog to pick the band's colors. |
+| `/live config` | Opens the settings dialog: voice, colors, animation, end-of-speech silence. |
+| `/live config voice <name>` | Sets the voice, like `/live voice`. |
 | `/live config <user\|agent\|dot\|idle> <color>` | Sets one color directly, for example `/live config agent magenta`. |
-| `/live config reset` | Restores the default colors. |
+| `/live config animation <wave\|bars\|off>` | How the band's wave moves. |
+| `/live config silence <1000\|1500\|2000\|2500\|3000>` | The silence (ms) that ends what you say; restarts the listener. |
+| `/live config reset` | Restores every setting above to its default. |
 
 While live mode is on, a band of two rows sits above the prompt.
 
@@ -58,7 +61,7 @@ blinks while the microphone is live (a steady red `🔇` while muted), the Mute 
 Stop controls, then a wave across the rest of the band. While listening the wave
 moves like sound, in green, its height following the microphone level (a low
 ripple in silence, tall while you talk), so you can see the mic hears you; while Claude speaks it is a moving cyan wave; otherwise it is a
-flat dim gray line. The colors can be changed (see Colors).
+flat dim gray line. The colors and the animation can be changed (see Live settings).
 
 The **text bar** below reads `<state> · <voice>`, plus `N queued` while
 sentences wait to be spoken, with the suggested chords on the right
@@ -94,11 +97,21 @@ Only replies to prompts you spoke are read aloud. Prompts you type are answered
 as usual, in silence. Code blocks are never read: the mod says "código omitido"
 once instead.
 
-## Colors
+## Live settings
 
-`/live config` opens a dialog with one picker per color, plus `Restore` (the
-defaults) and `Close`; `Esc` closes it too. Changes show on the band at once
-and are kept for later sessions.
+`/live config` opens a dialog with one picker per setting, plus `Restore` (the
+defaults) and `Close`; `Esc` closes it too. Changes take at once and are kept
+for later sessions. Where the dialog cannot be shown, `/live config` answers
+with every current setting and the commands that change them.
+
+| Setting | What it changes | Default |
+| --- | --- | --- |
+| Voice | The Kokoro voice. The list comes from Kokoro (`/v1/audio/voices`), Spanish first; a built-in list when Kokoro does not answer. | `voice` below |
+| Animation | `wave` (a line bouncing with the sound), `bars` (the same, as bars) or `off` (a still dim line). | `wave` |
+| End silence | 1000-3000 ms of silence that ends what you say; a change restarts the listener. | `vadEndSilenceMs` below |
+| Colors | The band's colors, below. | |
+
+### Colors
 
 | Color | Colors | Default |
 | --- | --- | --- |

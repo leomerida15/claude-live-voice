@@ -34,6 +34,10 @@ export type World = {
   store: Map<string, unknown>
   /** The ids of the panes the plugin opened, oldest first. */
   opened: string[]
+  /** Whether `$.ui.open` places the pane (false: it waits undrawn, as on a narrow terminal). */
+  panes: { isPlaced: boolean }
+  /** The voices Kokoro's `/v1/audio/voices` lists; undefined: Kokoro is not answering. */
+  voices: { list: string[] | undefined }
 }
 
 /**
@@ -77,6 +81,8 @@ export function fakeWorld(on: On, transcript = 'hola mundo'): World {
     reply: { text: '' },
     store: new Map(),
     opened: [],
+    panes: { isPlaced: true },
+    voices: { list: ['af_heart', 'bm_george', 'em_alex', 'ef_dora', 'em_santa'] },
   }
   on('state.set', (_$, e, next) => {
     stateWrites += 1
@@ -101,15 +107,24 @@ export function fakeWorld(on: On, transcript = 'hola mundo'): World {
 
     return { value: undefined }
   })
+  on('store.delete', (_$, e) => {
+    world.store.delete(e.key)
+
+    return { value: undefined }
+  })
   on('ui.open', (_$, e) => {
     world.opened.push(e.id)
 
-    return { value: { isPlaced: true as const } }
+    return { value: world.panes.isPlaced ? { isPlaced: true as const } : { isPlaced: false as const, reason: 'narrow terminal' } }
   })
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
   on('process.run', (_$, e) => {
     world.runs.push([...e.argv])
-    const stdout = e.argv[0] === 'curl' ? JSON.stringify({ text: transcript }) : ''
+    const isVoices = e.argv[0] === 'curl' && e.argv.some(arg => arg.endsWith('/v1/audio/voices'))
+    if (isVoices && world.voices.list === undefined) {
+      return { value: { exitCode: 7, stdout: '', stderr: 'connection refused', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
+    const stdout = isVoices ? JSON.stringify({ voices: world.voices.list }) : e.argv[0] === 'curl' ? JSON.stringify({ text: transcript }) : ''
 
     return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
   })

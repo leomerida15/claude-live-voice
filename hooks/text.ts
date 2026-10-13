@@ -1,7 +1,7 @@
 // Pure text helpers of the live-voice mod: command parsing, transcript
 // filtering, markdown stripping and sentence chunking for speech.
 
-import type { LiveVoiceColor, LiveVoiceColors } from '../types'
+import type { LiveVoiceAnimation, LiveVoiceColor, LiveVoiceColors } from '../types'
 
 export const USAGE = 'Usage: /live [on|off|mute|status|voice <name>|config]'
 
@@ -14,7 +14,15 @@ export const COLORS: readonly LiveVoiceColor[] = ['red', 'green', 'yellow', 'blu
 
 export const DEFAULT_COLORS: LiveVoiceColors = { user: 'green', agent: 'cyan', dot: 'red', idle: 'gray' }
 
-export const CONFIG_USAGE = `Usage: /live config [reset | <${COLOR_TARGETS.join('|')}> <${COLORS.join('|')}>]`
+/** How the band's wave moves: a bouncing line, bars, or not at all. */
+export const ANIMATIONS: readonly LiveVoiceAnimation[] = ['wave', 'bars', 'off']
+
+/** The end-of-speech silences `/live config` offers, in ms. */
+export const SILENCES: readonly number[] = [1000, 1500, 2000, 2500, 3000]
+
+export const CONFIG_USAGE =
+  `Usage: /live config [reset | voice <name> | animation <${ANIMATIONS.join('|')}> | silence <${SILENCES.join('|')}>` +
+  ` | <${COLOR_TARGETS.join('|')}> <${COLORS.join('|')}>]`
 
 const isTarget = (value: string): value is ColorTarget => (COLOR_TARGETS as readonly string[]).includes(value)
 const isColor = (value: unknown): value is LiveVoiceColor => typeof value === 'string' && (COLORS as readonly string[]).includes(value)
@@ -31,6 +39,33 @@ export function liveColors(value: unknown): LiveVoiceColors {
   return colors
 }
 
+/** The settings `/live config` keeps beside the colors, each under its own `$.store` key. */
+export type LiveSettings = { voice: string; animation: LiveVoiceAnimation; silenceMs: number }
+
+const isAnimation = (value: unknown): value is LiveVoiceAnimation =>
+  typeof value === 'string' && (ANIMATIONS as readonly string[]).includes(value)
+const isSilence = (value: unknown): value is number => typeof value === 'number' && SILENCES.includes(value)
+const isVoice = (value: unknown): value is string => typeof value === 'string' && VOICE_NAME.test(value)
+
+/** Settings read back from the store: each valid one kept, anything else its default. */
+export function liveSettings(stored: Record<string, unknown>, defaults: LiveSettings): LiveSettings {
+  return {
+    voice: isVoice(stored.voice) ? stored.voice : defaults.voice,
+    animation: isAnimation(stored.animation) ? stored.animation : defaults.animation,
+    silenceMs: isSilence(stored.silenceMs) ? stored.silenceMs : defaults.silenceMs,
+  }
+}
+
+/** Kokoro voice names, each once, in name order with the Spanish (`e`) ones first. */
+export function sortVoices(voices: readonly string[]): string[] {
+  const names = [...new Set(voices.filter(isVoice))].sort()
+
+  return [...names.filter(name => name.startsWith('e')), ...names.filter(name => !name.startsWith('e'))]
+}
+
+/** The voices offered when Kokoro does not list its own: Spanish first, a few English ones. */
+export const FALLBACK_VOICES: readonly string[] = ['ef_dora', 'em_alex', 'em_santa', 'af_heart', 'af_bella', 'am_adam', 'bf_emma', 'bm_george']
+
 /** Said once per reply in place of its code blocks. */
 export const CODE_OMITTED = 'código omitido'
 
@@ -44,6 +79,9 @@ export type LiveCommand =
   | { kind: 'config' }
   | { kind: 'config-reset' }
   | { kind: 'config-set'; target: ColorTarget; color: LiveVoiceColor }
+  | { kind: 'config-voice'; voice: string }
+  | { kind: 'config-animation'; animation: LiveVoiceAnimation }
+  | { kind: 'config-silence'; silenceMs: number }
   | { kind: 'error'; message: string }
 
 const VOICE_NAME = /^[a-z]{1,3}_[a-z0-9]+$/i
@@ -53,6 +91,10 @@ function parseConfig(rest: string[]): LiveCommand {
   if (rest.length === 0) return { kind: 'config' }
   if (first === 'reset' && rest.length === 1) return { kind: 'config-reset' }
   if (isTarget(first) && isColor(second) && extra.length === 0) return { kind: 'config-set', target: first, color: second }
+  if (first === 'voice' && isVoice(second) && extra.length === 0) return { kind: 'config-voice', voice: second }
+  if (first === 'animation' && isAnimation(second) && extra.length === 0) return { kind: 'config-animation', animation: second }
+  const silenceMs = /^\d+$/.test(second) ? Number(second) : NaN
+  if (first === 'silence' && isSilence(silenceMs) && extra.length === 0) return { kind: 'config-silence', silenceMs }
 
   return { kind: 'error', message: CONFIG_USAGE }
 }
@@ -336,6 +378,28 @@ export function bounceRow(frame: number, level: number, width: number): string {
     const fast = Math.sin((cell + step) * 0.9)
     const slow = Math.sin((cell - step * 0.6) * 0.37 + 1)
     row += levelGlyph(amplitude * (0.5 + 0.3 * fast + 0.2 * slow))
+  }
+
+  return row
+}
+
+/**
+ * Frame `frame` of the listening bars, exactly `width` cells: a bar every
+ * other cell, each jumping to its own height each frame, all scaled by the
+ * mic level (0..1) as `bounceRow` is.
+ */
+export function barsRow(frame: number, level: number, width: number): string {
+  const size = cells(width)
+  const amplitude = RIPPLE + (1 - RIPPLE) * unit(level)
+  const step = Math.trunc(Number.isFinite(frame) ? frame : 0)
+  let row = ''
+  for (let cell = 0; cell < size; cell += 1) {
+    if (cell % 2 === 1) {
+      row += ' '
+      continue
+    }
+    const noise = Math.sin(cell * 12.9898 + step * 78.233) * 43758.5453
+    row += levelGlyph(amplitude * (0.35 + 0.65 * (noise - Math.floor(noise))))
   }
 
   return row

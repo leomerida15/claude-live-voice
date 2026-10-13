@@ -64,9 +64,12 @@ Mark each step pass or fail and note what you heard or saw on a failure.
 - [ ] `/live voice em_alex`, ask something: the new voice is used. `/live status` reports it.
 - [ ] `/live status` reports state, voice and queue.
 - [ ] `/live config agent magenta`: the answer is "agent color set to magenta." and the next spoken
-  reply's wave is magenta. `/live config` opens the colors dialog; picking a color changes the band at
-  once; `Restore` brings back green/cyan/red/gray; `Esc` or `Close` closes it. After restarting Claude
-  Code the chosen colors are still there. `/live config user pink` answers the usage.
+  reply's wave is magenta. `/live config` opens the settings dialog (and prints the current settings):
+  Voice lists Kokoro's voices, Spanish first; picking a color changes the band at once; Animation `bars`
+  draws bars, `off` a still dim line; End silence 3000 lets you pause longer mid-sentence; `Restore`
+  brings back every default; `Esc` or `Close` closes it. After restarting Claude Code the choices are
+  still there. `/live config user pink` answers the usage. On a narrow terminal, if no dialog shows,
+  the answer still lists every setting and the commands.
 
 ## 7. Two sessions (process scoping)
 

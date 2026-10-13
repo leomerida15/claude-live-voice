@@ -1,27 +1,33 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, HookStream, ProcessSpawnChunk, ProcessSpawnResult, Register, Timer } from 'claude-code'
 
-import type { LiveVoiceColors, LiveVoiceState, LiveVoiceStatus } from '../types'
+import type { LiveVoiceAnimation, LiveVoiceColors, LiveVoiceSettings, LiveVoiceState, LiveVoiceStatus } from '../types'
 import {
+  ANIMATIONS,
   COLORS,
   CONFIG_USAGE,
   COLOR_TARGETS,
   DEFAULT_COLORS,
+  FALLBACK_VOICES,
+  SILENCES,
   SentenceChunker,
   USAGE,
   claim,
   audioBarWaveWidth,
+  barsRow,
   bounceRow,
   cellWidth,
   cleanTranscript,
   flatRow,
   killPattern,
   liveColors,
+  liveSettings,
   parseListenerLine,
   parseLiveCommand,
   safeSessionId,
   sessionTag,
   smoothLevel,
+  sortVoices,
   tunable,
   waveRow,
 } from './text.ts'
@@ -33,15 +39,19 @@ type Child = HookStream<ProcessSpawnChunk, ProcessSpawnResult>
 const OFF: LiveVoiceStatus = { isOn: false, state: 'off', queue: 0, voice: '', level: 0, wave: 0, dot: false }
 const status = atom({ plugin: 'live-voice', key: 'status' } as const, OFF)
 const colors = atom({ plugin: 'live-voice', key: 'colors' } as const, DEFAULT_COLORS)
+const SETTINGS: LiveVoiceSettings = { voice: 'ef_dora', animation: 'wave', silenceMs: 2000 }
+const settings = atom({ plugin: 'live-voice', key: 'settings' } as const, SETTINGS)
 
-// The colors dialog's pane, and what each of its Selects is labelled.
-const COLORS_PANE = 'live-voice-colors'
+// The settings dialog's pane, and what each of its Selects is labelled.
+const CONFIG_PANE = 'live-voice-config'
 const COLOR_LABELS: Record<keyof LiveVoiceColors, string> = {
   user: 'You speaking   ',
   agent: 'Claude speaking',
   dot: 'Live dot       ',
   idle: 'Idle line      ',
 }
+// The `$.store` keys of the settings kept beside `colors`.
+const STORED = ['voice', 'animation', 'silenceMs'] as const
 
 const STT_TIMEOUT_MS = 60_000
 // The band's clock while live voice is on: the wave moves one frame a tick
@@ -68,6 +78,10 @@ const live = {
   // The mic level (0..1) the listening wave shows: listen.py's levels,
   // smoothed (fast attack, slow decay); 0 unless listening.
   level: 0,
+  // How the wave moves (also in the `settings` state, for the band).
+  animation: 'wave' as LiveVoiceAnimation,
+  // Kokoro's voices, as last listed for the settings dialog.
+  voices: [...FALLBACK_VOICES],
   // The band's ticks, the wave's frame, the live dot, and the timer that
   // moves them while live voice is on.
   ticks: 0,
@@ -95,6 +109,10 @@ const config = {
   dir: '',
   pauseFile: '',
 }
+
+// What `/live config reset` restores: the plugin's settings (`/config`), or
+// the built-in defaults.
+const defaults = { voice: 'ef_dora', silenceMs: 2000 }
 
 const stateNow = (): LiveVoiceState => {
   if (!live.isOn) return 'off'
@@ -142,7 +160,7 @@ const startTicker = ($: $) => {
     const hasBlinked = dot !== live.dot
     live.dot = dot
     const state = stateNow()
-    const isMoving = state === 'listening' || state === 'speaking'
+    const isMoving = live.animation !== 'off' && (state === 'listening' || state === 'speaking')
     if (isMoving) live.waveTick += 1
     if (isMoving || (hasBlinked && !live.isMuted)) void publish($).catch(() => undefined)
   })
@@ -305,13 +323,8 @@ const silence = async ($: $) => {
   await publish($)
 }
 
-const start = async ($: $) => {
-  if (live.isOn) return
-  live.isOn = true
-  live.isMuted = false
-  await $.process.run(['mkdir', '-p', config.dir])
-  await writePause($)
-  startTicker($)
+// Starts listen.py with the current VAD settings and reads it.
+const spawnListener = ($: $) => {
   const child = $.process.spawn({
     argv: [
       'python3', '-I', `${config.scripts}/listen.py`,
@@ -323,7 +336,28 @@ const start = async ($: $) => {
   })
   live.listener = child
   $.clock.after(0, () => void listen($, child))
+}
+
+const start = async ($: $) => {
+  if (live.isOn) return
+  live.isOn = true
+  live.isMuted = false
+  await $.process.run(['mkdir', '-p', config.dir])
+  await writePause($)
+  startTicker($)
+  spawnListener($)
   await publish($)
+}
+
+// Stops this session's listener and starts it again, so new VAD settings
+// take: the old one is let go first, so its end is not taken for a failure.
+const restartListener = async ($: $) => {
+  const listener = live.listener
+  if (!live.isOn || listener === undefined) return
+  live.listener = undefined
+  void listener.return(undefined as never).catch(() => undefined)
+  await kill($, 'listen.py')
+  if (live.isOn) spawnListener($)
 }
 
 // Lets go of the children this module held (a reload's are orphans by now)
@@ -383,6 +417,79 @@ const setColors = async ($: $, next: LiveVoiceColors) => {
 const pickColor = async ($: $, target: keyof LiveVoiceColors, color: LiveVoiceColors[keyof LiveVoiceColors]) =>
   setColors($, { ...liveColors(await read($, colors)), [target]: color })
 
+// Keeps one setting for later sessions; a failed write says so.
+const keep = async ($: $, key: (typeof STORED)[number], value: unknown) =>
+  $.store.set(key, value).catch(() => $.ui.toast(`live-voice: could not save the ${key}`))
+
+// Shows the settings as they are now, to the band and the dialog.
+const showSettings = ($: $) =>
+  update($, settings, () => ({ voice: live.voice, animation: live.animation, silenceMs: config.vadEndSilenceMs }))
+
+const setVoice = async ($: $, voice: string) => {
+  live.voice = voice
+  await publish($)
+  await showSettings($)
+  await keep($, 'voice', voice)
+}
+
+const setAnimation = async ($: $, animation: LiveVoiceAnimation) => {
+  live.animation = animation
+  await showSettings($)
+  await keep($, 'animation', animation)
+}
+
+// A new end-of-speech silence restarts the listener when it is running.
+const setSilence = async ($: $, silenceMs: number) => {
+  const isNew = silenceMs !== config.vadEndSilenceMs
+  config.vadEndSilenceMs = silenceMs
+  await showSettings($)
+  await keep($, 'silenceMs', silenceMs)
+  if (isNew) await restartListener($)
+}
+
+// Back to the plugin's settings and the default colors; nothing kept.
+const resetSettings = async ($: $) => {
+  await setColors($, DEFAULT_COLORS)
+  live.voice = defaults.voice
+  live.animation = 'wave'
+  const isNew = config.vadEndSilenceMs !== defaults.silenceMs
+  config.vadEndSilenceMs = defaults.silenceMs
+  await showSettings($)
+  await Promise.all(STORED.map(key => $.store.delete(key).catch(() => undefined)))
+  await publish($)
+  if (isNew) await restartListener($)
+}
+
+// Kokoro's own voice list (Spanish first), or the built-in one when it does not answer.
+const loadVoices = async ($: $) => {
+  const url = config.kokoroUrl.replace(/\/audio\/speech\/?$/, '/audio/voices')
+  const done = await $.process.run(['curl', '-sf', '--max-time', '3', url], { timeoutMs: 5_000 }).catch(() => undefined)
+  let listed: string[] = []
+  try {
+    const voices: unknown = done?.exitCode === 0 ? JSON.parse(done.stdout).voices : undefined
+    listed = Array.isArray(voices) ? sortVoices(voices.filter((one): one is string => typeof one === 'string')) : []
+  } catch {
+    listed = []
+  }
+  live.voices = listed.length > 0 ? listed : [...FALLBACK_VOICES]
+}
+
+// Every setting and how to change it: the answer of `/live config` when the
+// dialog cannot be shown, and a reminder when it is.
+const summary = async ($: $) => {
+  const now = liveColors(await read($, colors))
+
+  return [
+    'Live voice settings:',
+    `  voice      ${live.voice}`,
+    `  animation  ${live.animation}`,
+    `  silence    ${config.vadEndSilenceMs} ms`,
+    `  colors     ${COLOR_TARGETS.map(target => `${target} ${now[target]}`).join(' · ')}`,
+    'Change one with /live config voice <name>, or:',
+    CONFIG_USAGE,
+  ].join('\n')
+}
+
 const describe = () =>
   live.isOn
     ? `Live voice is on: ${stateNow()}, voice ${live.voice}, ${live.queue.length} sentence(s) queued.`
@@ -402,14 +509,17 @@ const MIN_WAVE = 4
 const HINT = 'alt+space mute · alt+s stop'
 
 export const register: Register = (on, options) => {
-  live.voice = String(options.voice ?? live.voice)
+  // From the built-in defaults, not the module's: a hot reload keeps the module's last picks.
+  live.voice = String(options.voice ?? SETTINGS.voice)
   config.language = String(options.language ?? config.language)
   config.whisperUrl = String(options.whisperUrl ?? config.whisperUrl)
   config.kokoroUrl = String(options.kokoroUrl ?? config.kokoroUrl)
   config.echoTailMs = tunable(options.echoTailMs, config.echoTailMs)
-  config.vadEndSilenceMs = Math.max(1, Math.round(tunable(options.vadEndSilenceMs, config.vadEndSilenceMs)))
+  config.vadEndSilenceMs = Math.max(1, Math.round(tunable(options.vadEndSilenceMs, SETTINGS.silenceMs)))
   config.vadStartFrames = Math.max(1, Math.round(tunable(options.vadStartFrames, config.vadStartFrames)))
   config.vadThresholdFactor = tunable(options.vadThresholdFactor, config.vadThresholdFactor)
+  defaults.voice = live.voice
+  defaults.silenceMs = config.vadEndSilenceMs
 
   on('session.start', async ($, e, next) => {
     const root = $.plugin.root
@@ -423,12 +533,19 @@ export const register: Register = (on, options) => {
     forgetChildren()
     const stored = await $.store.get('colors').catch(() => undefined)
     await update($, colors, () => liveColors(stored))
-    await update($, status, () => (was.isOn ? { ...was, queue: 0 } : { ...OFF, voice: live.voice }))
+    const kept: Record<string, unknown> = {}
+    for (const key of STORED) kept[key] = await $.store.get(key).catch(() => undefined)
+    const loaded = liveSettings(kept, { ...defaults, animation: 'wave' })
+    live.voice = loaded.voice
+    live.animation = loaded.animation
+    config.vadEndSilenceMs = loaded.silenceMs
+    await showSettings($)
+    await update($, status, () => (was.isOn ? { ...was, queue: 0, voice: live.voice } : { ...OFF, voice: live.voice }))
     $.clock.after(0, () => void recover($, was))
     await $.command.register({
       name: 'live',
-      description: 'Hands-free voice conversation (local Whisper + Kokoro)',
-      argumentHint: '[on|off|mute|status|voice <name>|config [reset|<target> <color>]]',
+      description: 'Hands-free voice conversation (local Whisper + Kokoro); /live config: voice, colors, animation, silence',
+      argumentHint: '[on|off|mute|status|voice <name>|config [voice <name>|animation <wave|bars|off>|silence <ms>|<target> <color>|reset]]',
       immediate: true,
     })
 
@@ -466,15 +583,29 @@ export const register: Register = (on, options) => {
       case 'status':
         return { text: describe() }
       case 'voice':
-        live.voice = command.voice
-        await publish($)
+      case 'config-voice':
+        await setVoice($, command.voice)
         return { text: `Voice set to ${command.voice}.` }
-      case 'config':
-        await $.ui.open({ id: COLORS_PANE, title: 'Live voice colors', focus: true, closeOnEscape: true, rows: 8 })
-        return { text: 'Live voice colors opened.' }
+      case 'config': {
+        await loadVoices($)
+        // A dialog: it takes the keys, Esc closes it, toasts wait behind it.
+        const opened = await $.ui
+          .open({ id: CONFIG_PANE, title: 'Live voice settings', focus: true, closeOnEscape: true, holdToasts: true, rows: 12 })
+          .catch(() => undefined)
+        const head = opened?.isPlaced === true
+          ? 'Live voice settings opened (Esc closes).'
+          : 'Could not open the settings dialog here (a wider terminal shows it).'
+        return { text: `${head}\n${await summary($)}` }
+      }
       case 'config-reset':
-        await setColors($, DEFAULT_COLORS)
-        return { text: 'Colors restored to the defaults.' }
+        await resetSettings($)
+        return { text: 'Settings restored to the defaults.' }
+      case 'config-animation':
+        await setAnimation($, command.animation)
+        return { text: `Animation set to ${command.animation}.` }
+      case 'config-silence':
+        await setSilence($, command.silenceMs)
+        return { text: `End-of-speech silence set to ${command.silenceMs} ms.` }
       case 'config-set':
         await pickColor($, command.target, command.color)
         return { text: `${command.target} color set to ${command.color}.` }
@@ -533,6 +664,7 @@ export const register: Register = (on, options) => {
       return next(e)
     }
     const palette = liveColors(await read($, colors))
+    const { animation } = await read($, settings)
     const { Box, Button, Text } = $.ui.resolve(e)
     const columns = e.props.bodyColumns
     // A state from before a reload may lack the level; the next publish fills it.
@@ -543,11 +675,17 @@ export const register: Register = (on, options) => {
     const muteLabel = live.isMuted ? '🎙 Unmute' : '🔇 Mute'
     const stopLabel = '⏹ Stop'
     const width = audioBarWaveWidth(columns, [mic, `m: ${muteLabel}`, `s: ${stopLabel}`, BAR])
-    const wave =
-      now.state === 'listening' ? bounceRow(now.wave ?? 0, level, width) : now.state === 'speaking' ? waveRow(now.wave ?? 0, width) : flatRow(width)
-    // Who is talking: the person, Claude, or nobody (dim).
-    const isIdle = now.state !== 'listening' && now.state !== 'speaking'
-    const waveColor = now.state === 'listening' ? palette.user : now.state === 'speaking' ? palette.agent : palette.idle
+    // Who is talking: the person, Claude, or nobody (dim); with no animation, a still dim line.
+    const isIdle = animation === 'off' || (now.state !== 'listening' && now.state !== 'speaking')
+    const frame = now.wave ?? 0
+    const wave = isIdle
+      ? flatRow(width)
+      : animation === 'bars'
+        ? barsRow(frame, now.state === 'listening' ? level : 0.8, width)
+        : now.state === 'listening'
+          ? bounceRow(frame, level, width)
+          : waveRow(frame, width)
+    const waveColor = isIdle ? palette.idle : now.state === 'listening' ? palette.user : palette.agent
     const queued = now.queue > 0 ? ` · ${now.queue} queued` : ''
     const about = `${now.state} · ${now.voice}${queued}`
     // The hint goes first when the text bar is narrow.
@@ -592,14 +730,18 @@ export const register: Register = (on, options) => {
     )
   })
 
-  on('ui.render', { component: 'Pane', requestId: COLORS_PANE }, async ($, e) => {
+  on('ui.render', { component: 'Pane', requestId: CONFIG_PANE }, async ($, e) => {
     const elements = $.ui.resolve(e)
     const { Box, Button, Text } = elements
     const now = liveColors(await read($, colors))
-    // A surface with no Select (mobile) gets the colors and the command instead.
+    const current = await read($, settings)
+    // A surface with no Select (mobile) gets the settings and the commands instead.
     if (!('Select' in elements)) {
       return (
         <Box flexDirection="column">
+          <Text>Voice           {current.voice}</Text>
+          <Text>Animation       {current.animation}</Text>
+          <Text>End silence     {current.silenceMs} ms</Text>
           {COLOR_TARGETS.map(target => (
             <Text>
               {COLOR_LABELS[target]} {now[target]}
@@ -610,27 +752,58 @@ export const register: Register = (on, options) => {
       )
     }
     const { Select } = elements
-    const options = COLORS.map(color => ({ value: color }))
+    const colorOptions = COLORS.map(color => ({ value: color }))
+    const voices = live.voices.includes(current.voice) ? live.voices : [current.voice, ...live.voices]
+    const silences = SILENCES.includes(current.silenceMs) ? SILENCES : [...SILENCES, current.silenceMs].sort((a, b) => a - b)
 
     return (
       <Box flexDirection="column">
-        <Text dimColor>The band's colors, kept for later sessions.</Text>
-        {COLOR_TARGETS.map((target, index) => (
+        <Text dimColor>Live voice, kept for later sessions. Esc closes.</Text>
+        <Select
+          key="voice"
+          label="Voice           "
+          options={voices.map(voice => ({ value: voice }))}
+          value={current.voice}
+          autoFocus
+          onSelect={(value: string) => {
+            if (voices.includes(value)) void setVoice($, value)
+          }}
+        />
+        {COLOR_TARGETS.map(target => (
           <Select
             key={`color-${target}`}
             label={`${COLOR_LABELS[target]} `}
-            options={options}
+            options={colorOptions}
             value={now[target]}
-            autoFocus={index === 0 ? true : undefined}
             onSelect={(value: string) => {
               const color = COLORS.find(one => one === value)
               if (color !== undefined) void pickColor($, target, color)
             }}
           />
         ))}
+        <Select
+          key="animation"
+          label="Animation       "
+          options={ANIMATIONS.map(animation => ({ value: animation }))}
+          value={current.animation}
+          onSelect={(value: string) => {
+            const animation = ANIMATIONS.find(one => one === value)
+            if (animation !== undefined) void setAnimation($, animation)
+          }}
+        />
+        <Select
+          key="silence"
+          label="End silence (ms)"
+          options={silences.map(ms => ({ value: String(ms) }))}
+          value={String(current.silenceMs)}
+          onSelect={(value: string) => {
+            const ms = Number(value)
+            if (silences.includes(ms)) void setSilence($, ms)
+          }}
+        />
         <Box flexDirection="row" gap={2}>
-          <Button key="restore" plain label="Restore" onPress={() => void setColors($, DEFAULT_COLORS)} />
-          <Button key="close" plain label="Close" onPress={() => void $.ui.close({ id: COLORS_PANE })} />
+          <Button key="restore" plain label="Restore" onPress={() => void resetSettings($)} />
+          <Button key="close" plain label="Close" onPress={() => void $.ui.close({ id: CONFIG_PANE })} />
         </Box>
       </Box>
     )

@@ -26,8 +26,18 @@ export type LiveVoiceColor = 'red' | 'green' | 'yellow' | 'blue' | 'magenta' | '
  */
 export type LiveVoiceColors = { user: LiveVoiceColor; agent: LiveVoiceColor; dot: LiveVoiceColor; idle: LiveVoiceColor }
 
+/** How the band's wave moves: a bouncing line, bars, or not at all (a still dim line). */
+export type LiveVoiceAnimation = 'wave' | 'bars' | 'off'
+
+/**
+ * The settings `/live config` changes beside the colors, each kept in
+ * `$.store` under its own key: the Kokoro voice, how the wave moves, and the
+ * silence (ms) that ends an utterance.
+ */
+export type LiveVoiceSettings = { voice: string; animation: LiveVoiceAnimation; silenceMs: number }
+
 declare module 'claude-code' {
   interface PluginState {
-    'live-voice': { status: LiveVoiceStatus; colors: LiveVoiceColors }
+    'live-voice': { status: LiveVoiceStatus; colors: LiveVoiceColors; settings: LiveVoiceSettings }
   }
 }

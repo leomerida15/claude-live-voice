@@ -13,7 +13,12 @@ import {
   cleanTranscript,
   killPattern,
   flatRow,
+  ANIMATIONS,
+  SILENCES,
+  barsRow,
   bounceRow,
+  liveSettings,
+  sortVoices,
   levelGlyph,
   smoothLevel,
   parseListenerLine,
@@ -66,6 +71,22 @@ describe('parseLiveCommand', () => {
     }
     expect(CONFIG_USAGE).toContain('user|agent|dot|idle')
     expect(CONFIG_USAGE).toContain('red|green|yellow|blue|magenta|cyan|white|gray')
+  })
+
+  test('config sets the voice, the animation and the end-of-speech silence', () => {
+    expect(parseLiveCommand('config voice em_alex')).toEqual({ kind: 'config-voice', voice: 'em_alex' })
+    expect(parseLiveCommand('config animation BARS')).toEqual({ kind: 'config-animation', animation: 'bars' })
+    expect(parseLiveCommand('config animation off')).toEqual({ kind: 'config-animation', animation: 'off' })
+    expect(parseLiveCommand('config silence 2500')).toEqual({ kind: 'config-silence', silenceMs: 2500 })
+    for (const args of ['config voice', 'config voice ../x', 'config animation spin', 'config silence 1234', 'config silence', 'config silence 2000 now']) {
+      const parsed = parseLiveCommand(args)
+      expect(parsed.kind === 'error' && parsed.message).toBe(CONFIG_USAGE)
+    }
+    expect(CONFIG_USAGE).toContain('animation <wave|bars|off>')
+    expect(CONFIG_USAGE).toContain('silence <1000|1500|2000|2500|3000>')
+    expect(CONFIG_USAGE).toContain('voice <name>')
+    expect(ANIMATIONS).toEqual(['wave', 'bars', 'off'])
+    expect(SILENCES).toEqual([1000, 1500, 2000, 2500, 3000])
   })
 
   test('the usage names config', () => {
@@ -294,6 +315,29 @@ describe('meter', () => {
     expect(liveColors({ user: 'blue', agent: 'pink', dot: 7 })).toEqual({ ...DEFAULT_COLORS, user: 'blue' })
     expect(liveColors('red')).toEqual(DEFAULT_COLORS)
     expect(liveColors([1])).toEqual(DEFAULT_COLORS)
+  })
+
+  test('barsRow draws level-driven bars at exactly its width, moving with the frame', () => {
+    const tall = (row: string) => [...row].filter(glyph => '▅▆▇█'.includes(glyph)).length
+    expect([...barsRow(0, 0.5, 70)]).toHaveLength(70)
+    expect([...barsRow(3, 1, 9)]).toHaveLength(9)
+    expect(barsRow(0, 1, 0)).toBe('')
+    expect(barsRow(0, 1, 9)).toMatch(/^[▁-█]( [▁-█])+$/)
+    expect(barsRow(0, 0, 70).replace(/ /g, '')).toMatch(/^[▁▂]+$/)
+    expect(tall(barsRow(0, 1, 70))).toBeGreaterThan(tall(barsRow(0, 0.2, 70)))
+    expect(barsRow(1, 0.7, 70)).not.toBe(barsRow(0, 0.7, 70))
+  })
+
+  test('liveSettings keeps the valid stored settings and defaults the rest', () => {
+    const defaults = { voice: 'ef_dora', animation: 'wave', silenceMs: 2000 } as const
+    expect(liveSettings({}, defaults)).toEqual(defaults)
+    expect(liveSettings({ voice: 'em_alex', animation: 'bars', silenceMs: 3000 }, defaults)).toEqual({ voice: 'em_alex', animation: 'bars', silenceMs: 3000 })
+    expect(liveSettings({ voice: '../x', animation: 'spin', silenceMs: 1234 }, defaults)).toEqual(defaults)
+    expect(liveSettings({ voice: 7, animation: null, silenceMs: '2500' }, defaults)).toEqual(defaults)
+  })
+
+  test('sortVoices puts the Spanish voices first and keeps only voice names', () => {
+    expect(sortVoices(['af_heart', 'em_alex', 'bm_george', 'ef_dora', 'bad name', 'em_alex'])).toEqual(['ef_dora', 'em_alex', 'af_heart', 'bm_george'])
   })
 
   test('wave loops through its frames at a fixed width', () => {

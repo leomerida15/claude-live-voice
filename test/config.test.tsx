@@ -24,9 +24,9 @@ const BAND = {
 } as const
 const PANE = {
   component: 'Pane',
-  requestId: 'live-voice-colors',
+  requestId: 'live-voice-config',
   props: {
-    title: 'Live voice colors',
+    title: 'Live voice settings',
     isFocused: true,
     bodyColumns: 60,
     placement: 'inline',
@@ -67,7 +67,7 @@ test('/live config reset restores the default colors', SLOW, async ($, on) => {
   // Kept from an earlier session.
   expect((await waveOf(ui))?.props.color).toBe('blue')
   const ran = await $.command.run(live('config reset'))
-  expect(ran.text).toBe('Colors restored to the defaults.')
+  expect(ran.text).toBe('Settings restored to the defaults.')
   await settle(world)
   expect((await waveOf(ui))?.props.color).toBe('green')
   expect(world.store.get('colors')).toEqual({ user: 'green', agent: 'cyan', dot: 'red', idle: 'gray' })
@@ -86,12 +86,12 @@ test('a bad /live config answers the usage with the valid values and changes not
   expect(world.store.has('colors')).toBe(false)
 })
 
-test('/live config opens the colors dialog; a pick persists and Restore resets', SLOW, async ($, on) => {
+test('/live config opens the settings dialog; a pick persists and Restore resets', SLOW, async ($, on) => {
   const world = fakeWorld(on)
   await $.session.start(START)
   const ran = await $.command.run(live('config'))
-  expect(ran.text).toMatch(/colors/i)
-  expect(world.opened).toContain('live-voice-colors')
+  expect(ran.text).toMatch(/settings/i)
+  expect(world.opened).toContain('live-voice-config')
   const pane = await $.ui.mount({ plugin: 'live-voice', surface: 'terminal', ...PANE })
   for (const key of ['color-user', 'color-agent', 'color-dot', 'color-idle']) {
     expect(await pane.find({ key })).toBeDefined()

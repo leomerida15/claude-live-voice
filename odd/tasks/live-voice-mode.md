@@ -83,7 +83,7 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
 - [x] T16 Speaking-style mic animation: the listening wave is a moving wave (like the speaking one) whose
   height follows the current smoothed mic level (fast attack, slow decay), not a scrolling history; the
   200-level history leaves `$.state`. Pure `bounceRow(frame, level, width)` + engine test.
-- [ ] T17 `/live config` that always shows: a focused dialog with voice (Kokoro's voice list, static
+- [x] T17 `/live config` that always shows: a focused dialog with voice (Kokoro's voice list, static
   fallback), the four colors, animation (`wave|bars|off`) and end-of-speech silence (1000-3000 ms,
   restarts the listener); persisted in `$.store`; text summary answer when the pane is not placed;
   shortcuts `voice|<target>|animation|silence|reset`; `/live` hint mentions config.
@@ -294,6 +294,28 @@ Barge-in, global keybindings, cloud providers.
   python 16 OK; `claude plugin validate .` passed (expected CLAUDE.md warning); tsc no output; `bash -n` ok.
   Not verified: how the bouncing wave looks with a real mic in a live terminal (smoke test). Commit: see git
   log (`feat: bounce the listening wave with the microphone level`).
+- T17 done (route: delegated direct). Cause of "config does not show": not established. No debug log of
+  today's live tests holds a `/live config` run (the T14 snapshot session ran only `/live on` and `off`;
+  an earlier one ran a pre-T14 snapshot where `config` was not a command). Per `$.ui.open`'s docs a pane
+  opened from a typed command's hook is placed at any width, so the fix makes the command always answer:
+  `/live config` opens pane `live-voice-config` as a dialog (`focus`, `closeOnEscape`, `holdToasts`,
+  `rows: 12`) and answers its placement (`opened (Esc closes)` or `could not open ... a wider terminal`)
+  plus a summary of every setting and `CONFIG_USAGE`; a rejected open counts as not placed.
+  Settings: voice (Kokoro `/v1/audio/voices` via curl, 3 s, `sortVoices` name order Spanish first;
+  `FALLBACK_VOICES` when it does not answer), the four colors, animation `wave|bars|off` (`barsRow`;
+  `off` draws a still dim idle-colored line and the timer stops moving it) and end silence
+  1000/1500/2000/2500/3000 ms (a change restarts the listener: old one let go and pkilled first, then
+  respawned with `--end-silence-ms`). Kept in `$.store` keys `voice`, `animation`, `silenceMs` (beside
+  `colors`), shown through a new `$.state` key `settings`; `/live voice` also keeps the voice now.
+  Shortcuts `config voice|animation|silence|<target> <color>|reset`; `reset` restores everything and
+  deletes the kept keys. Built-in defaults no longer drift on a hot reload (register reads them from
+  constants, not the module's last picks). `/live` description and argumentHint name the config options.
+  RED: `claude plugin test .` -> text.test.ts failed to load (`barsRow`, `liveSettings`, `sortVoices`,
+  `ANIMATIONS`, `SILENCES` missing) and 9 engine tests failed (new settings.test.tsx + renamed pane).
+  GREEN: 72 pass, 0 fail; python 16 OK; `claude plugin validate .` passed (expected CLAUDE.md warning);
+  tsc no output; `bash -n` ok. Not verified: the dialog's placement, focus, Esc and Close in a live
+  terminal; Kokoro's real voice list in the dialog (the endpoint answers `{"voices": [...]}`, checked
+  by curl). Commit: see git log (`feat: configure voice, animation and silence from /live config`).
 
 ## Next step
 The human runs `docs/smoke-test.md` with the microphone and reports failed steps. Not verified yet:
