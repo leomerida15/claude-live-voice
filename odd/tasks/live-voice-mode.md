@@ -44,7 +44,7 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
   `name === 'live-voice'`), not by matching the raw transcript text. Test-first.
 - [x] T7 Scope processes per session: a session token in the children's argv, a per-session runtime dir
   and pause flag; stop/silence kill only this session's children (no global `pkill -f <script>`). Test-first.
-- [ ] T8 Hot-reload recovery: on `session.start`, kill this session's orphaned children; if `$.state` says
+- [x] T8 Hot-reload recovery: on `session.start`, kill this session's orphaned children; if `$.state` says
   live was on, resume the listener (product decision: resume, not switch off). Test-first.
 - [ ] T9 Echo-guard tunables: `userConfig` options for the post-playback tail and the VAD thresholds,
   passed to `listen.py` as flags; defaults unchanged. Test-first (python + engine tests).
@@ -121,7 +121,17 @@ Barge-in, global keybindings, cloud providers.
   two sleepers tagged `live-voice-AAA` and `live-voice-AAAB`, the pattern for AAA killed only AAA.
   `claude plugin validate .` passed (pre-existing CLAUDE.md warning); tsc no errors; `bash -n` ok.
   Not covered: children started before a `/clear` (new session id, no `session.start`) keep the old tag, which the
-  module still holds until a reload.
+  module still holds until a reload. Commit 32ff9f1.
+
+- T8 done (route: delegated direct). `session.start` reads the status before anything else, lets go of the children
+  the module held and resets its runtime state, keeps the status on when it was on, and detaches `recover` with
+  `$.clock.after(0)`: scoped kill of this session's `listen.py` and `speak.sh` orphans (T7 pattern), then, when live
+  was on, `start` again (muted again if the status said muted). In tests a reload is a second `session.start` with
+  `$.state` saying on (the kit has no `$.state` noun on the test's `$` to seed it directly). RED:
+  `claude plugin test .` -> 1 fail (no scoped pkill and no second listener after the second `session.start`);
+  GREEN: 33 pass / 0 fail (resume, start while off spawns nothing, resume muted). `claude plugin validate .` passed
+  (pre-existing CLAUDE.md warning); tsc no errors; python 8 OK; `bash -n` ok.
+  Not verified: a real hot reload in an interactive session (needs a person).
 
 ## Next step
 Manual acceptance in an interactive session: `claude --plugin-dir <repo>`, `/live`, speak a question.

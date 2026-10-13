@@ -41,3 +41,47 @@ test('stopping kills only this session\'s children', SLOW, async ($, on) => {
     expect(argv).toContain('--')
   }
 })
+
+const listeners = (world: ReturnType<typeof fakeWorld>) =>
+  world.spawns.filter(spawn => spawn.argv.some(arg => arg.endsWith('listen.py')))
+
+test('a reload while live is on kills the orphans and resumes listening', SLOW, async ($, on) => {
+  const world = fakeWorld(on)
+  await $.session.start(START)
+  await $.command.run(live('on'))
+  await settle(world)
+  const killsBefore = world.runs.filter(argv => argv[0] === 'pkill').length
+
+  // A hot reload runs session.start again; $.state still says live is on.
+  await $.session.start(START)
+  await settle(world)
+  const kills = world.runs.filter(argv => argv[0] === 'pkill').slice(killsBefore)
+  expect(kills.map(argv => argv[argv.length - 1])).toEqual([
+    expect.stringMatching(new RegExp(`^listen.*${TAG}`)),
+    expect.stringMatching(new RegExp(`^speak.*${TAG}`)),
+  ])
+  expect(listeners(world)).toHaveLength(2)
+  expect((await $.command.run(live('status'))).text).toMatch(/Live voice is on: listening/)
+  await $.command.run(live('off'))
+})
+
+test('a session start while live is off starts no listener', SLOW, async ($, on) => {
+  const world = fakeWorld(on)
+  await $.session.start(START)
+  await settle(world)
+  expect(listeners(world)).toHaveLength(0)
+  expect((await $.command.run(live('status'))).text).toMatch(/Live voice is off/)
+})
+
+test('a reload while muted resumes muted', SLOW, async ($, on) => {
+  const world = fakeWorld(on)
+  await $.session.start(START)
+  await $.command.run(live('on'))
+  await $.command.run(live('mute'))
+  await settle(world)
+  await $.session.start(START)
+  await settle(world)
+  expect((await $.command.run(live('status'))).text).toMatch(/Live voice is on: muted/)
+  expect(world.files.get(`${RUNTIME_DIR}/live-voice/${SESSION_ID}/paused`)).toBe('1')
+  await $.command.run(live('off'))
+})

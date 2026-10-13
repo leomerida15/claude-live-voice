@@ -222,6 +222,37 @@ const start = async ($: $) => {
   await publish($)
 }
 
+// Lets go of the children this module held (a reload's are orphans by now)
+// and starts its runtime state over.
+const forgetChildren = () => {
+  for (const child of [live.listener, live.player]) {
+    void child?.return(undefined as never).catch(() => undefined)
+  }
+  live.isOn = false
+  live.isMuted = false
+  live.isTranscribing = false
+  live.listener = undefined
+  live.player = undefined
+  live.queue = []
+  live.isSpeaking = false
+  live.prompts = []
+  live.turns.clear()
+}
+
+// After session.start: kills this session's orphaned children, then, when
+// live voice was on before a reload, listens again (muted if it was).
+const recover = async ($: $, was: LiveVoiceStatus) => {
+  await kill($, 'listen.py')
+  await kill($, 'speak.sh')
+  if (!was.isOn) return
+  await start($)
+  if (was.state === 'muted') {
+    live.isMuted = true
+    await writePause($)
+    await publish($)
+  }
+}
+
 const stop = async ($: $) => {
   live.isOn = false
   live.prompts = []
@@ -254,7 +285,11 @@ export const register: Register = (on, options) => {
     config.tag = sessionTag(sessionId)
     config.dir = `${(await $.env.get('XDG_RUNTIME_DIR')) ?? '/tmp'}/live-voice/${safeSessionId(sessionId)}`
     config.pauseFile = `${config.dir}/paused`
-    await update($, status, () => ({ ...OFF, voice: live.voice }))
+    // A hot reload runs this again: the module started over, $.state did not.
+    const was = await read($, status)
+    forgetChildren()
+    await update($, status, () => (was.isOn ? { ...was, queue: 0 } : { ...OFF, voice: live.voice }))
+    $.clock.after(0, () => void recover($, was))
     await $.command.register({
       name: 'live',
       description: 'Hands-free voice conversation (local Whisper + Kokoro)',
