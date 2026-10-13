@@ -109,6 +109,12 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
   `hexToRgb`, `rgbToHex`, `stepChannel`, `channelBar`. Dialog: a target picker, a row of theme swatches, R/G/B
   bars with −/+ (hotkeys q/w, a/s, z/x), step `1` fine (1) / `2` coarse (16, default), a live preview. Shortcut
   `/live config <target> <theme|name|#hex>`; usage lists the kinds. Test-first.
+- [x] T23 Two-step voice picker (bug from a live session: the engine refused the pane, `Select "voice" options
+  must be 1 to 64 entries`, Kokoro lists 67 voices): a "Language" Select of the native languages present
+  (session language first, per `groupVoices`) and a "Voice" Select of only that language's voices, labelled
+  `Dora (female)`. The language defaults to the current voice's; changing it does not change the voice until
+  one is picked. The language choice lives in the `editor` state (`voiceLanguage`). A pure `selectOptions`
+  guard caps any option list at 64 (sorted input kept in order). Test-first with the real 67 Kokoro ids.
 
 ## Acceptance criteria
 - `claude plugin validate .` passes; type-check passes; `claude plugin test .` passes.
@@ -127,6 +133,7 @@ ask-on-risk. Forecast ~600 authored lines.
   T15–T18: delegated direct (one bounded writer; writer trigger: listen.py, speak.sh, register.tsx,
   text.ts, types, tests, docs).
   T19: delegated direct (writer trigger: register.tsx, text.ts, tests, docs).
+  T23: delegated direct (writer trigger: register.tsx, text.ts, types, tests, docs).
 
 ## Out of scope (hardening)
 Barge-in, global keybindings, cloud providers.
@@ -391,6 +398,20 @@ Barge-in, global keybindings, cloud providers.
   list theme keys and names (and a target's own hex). Pane rows requested: 22 (was 12). Defaults unchanged.
   Not verified: how a hex and a theme key draw in a live terminal, the hotkeys with the pane focused.
   Commit: see git log (`feat: theme, named and custom RGB colors in /live config`).
+
+- T23 done (route: delegated direct; writer trigger: register.tsx, text.ts, types, tests, docs). RED: `claude
+  plugin test .` -> 99 pass, 2 fail: with the real 67 Kokoro ids `$.ui.mount` threw `live-voice: ui.render (Pane)
+  refused: Select "voice" options must be 1 to 64 entries; the engine drew its own` (the test kit surfaces a
+  refused tree as a mount error). GREEN: 105 pass, 0 fail (`test/picker.test.tsx`: the pane mounts, every Select
+  has 1..64 unique options, Spanish first in 9 languages, American English lists its 30 voices and keeps the
+  voice, picking `af_heart` sets and keeps it; `voices.test.ts`: `selectOptions` cap, `voiceChoice`,
+  `voicePicker`). `claude plugin validate .` passed (1 expected CLAUDE.md warning); python 23 OK; `bash -n
+  scripts/speak.sh` ok; tsc no output. Decisions: the d.ts states no numeric Select limit (only "at least one,
+  values unique", values up to 10,000 characters); the 64 cap comes from the engine's refusal. The color
+  pickers hold 20 options at most and go through the same guard. The language pick does not change the voice;
+  the picker follows the voice again after a voice change or when the dialog opens. Pane rows: 23 (was 22).
+  Not verified: the dialog in a live terminal with the real Kokoro.
+  Commit: see git log (`fix: two-step voice picker within the 64-option Select limit`).
 
 ## Next step
 The human runs `docs/smoke-test.md` with the microphone and reports failed steps. Not verified yet:

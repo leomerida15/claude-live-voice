@@ -64,7 +64,10 @@ Mark each step pass or fail and note what you heard or saw on a failure.
 - [ ] `/live voice em_alex`, ask something: the new voice is used. `/live status` reports it.
 - [ ] `/live status` reports state, voice and queue.
 - [ ] `/live-config` opens the same settings dialog as `/live config`; `/live-config voice em_alex` sets the voice.
-- [ ] In the dialog the voice reads `Dora · Spanish · female (ef_dora)` and the list is grouped `Spanish — ...` first;
+- [ ] With the real Kokoro (67 voices) `/live-config` draws the plugin's dialog, not the engine's (no
+  `refused` line in the debug log); `Language` starts on Spanish, picking `American English` lists only its
+  voices (`Adam (male)` ...) and keeps the voice until one is picked.
+- [ ] In the dialog the voice reads `Dora · Spanish · female (ef_dora)` and the `Voice` picker lists `Dora (female)`;
   `Test voice` (or `t`) says "Hola, así suena esta voz." with live on and off; `/live config test` while a reply
   is spoken answers busy; with an English voice the sample is in English.
 - [ ] `/live config agent magenta`: the answer is "agent color set to magenta." and the next spoken

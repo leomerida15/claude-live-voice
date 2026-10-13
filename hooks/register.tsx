@@ -21,7 +21,6 @@ import {
   cleanTranscript,
   customBase,
   flatRow,
-  groupVoices,
   hexToRgb,
   isVoiced,
   killPattern,
@@ -32,6 +31,7 @@ import {
   parseLiveCommand,
   safeSessionId,
   sampleText,
+  selectOptions,
   sessionTag,
   rgbToHex,
   smoothLevel,
@@ -39,7 +39,8 @@ import {
   stepChannel,
   tunable,
   voiceLabel,
-  voiceOption,
+  voiceChoice,
+  voicePicker,
   wave as waveFrame,
   waveRow,
 } from './text.ts'
@@ -531,6 +532,9 @@ const nudgeChannel = async ($: $, channel: 0 | 1 | 2, sign: 1 | -1) => {
 
 const setEditor = ($: $, change: Partial<LiveVoiceEditor>) => update($, editor, now => ({ ...now, ...change }))
 
+// The voice picker follows the current voice again (a new voice, a newly opened dialog).
+const followVoice = ($: $) => update($, editor, ({ voiceLanguage: _, ...now }) => now)
+
 // Keeps one setting for later sessions; a failed write says so.
 const keep = async ($: $, key: (typeof STORED)[number], value: unknown) =>
   $.store.set(key, value).catch(() => $.ui.toast(`live-voice: could not save the ${key}`))
@@ -541,6 +545,7 @@ const showSettings = ($: $) =>
 
 const setVoice = async ($: $, voice: string) => {
   live.voice = voice
+  await followVoice($)
   await publish($)
   await showSettings($)
   await keep($, 'voice', voice)
@@ -654,9 +659,10 @@ const answerLive = async ($: $, args: string) => {
       return { text: `Voice set to ${command.voice}.` }
     case 'config': {
       await loadVoices($)
+      await followVoice($)
       // A dialog: it takes the keys, Esc closes it, toasts wait behind it.
       const opened = await $.ui
-        .open({ id: CONFIG_PANE, title: 'Live voice settings', focus: true, closeOnEscape: true, holdToasts: true, rows: 22 })
+        .open({ id: CONFIG_PANE, title: 'Live voice settings', focus: true, closeOnEscape: true, holdToasts: true, rows: 23 })
         .catch(() => undefined)
       const head = opened?.isPlaced === true
         ? 'Live voice settings opened (Esc closes).'
@@ -885,25 +891,35 @@ export const register: Register = (on, options) => {
     const edited = now[editing.target]
     const rgb = hexToRgb(customBase(edited)) ?? [128, 128, 128]
     // Theme keys, then names; a target's custom hex is offered as itself.
-    const colorOptions = (target: keyof LiveVoiceColors) => [
-      ...[...THEME_COLORS, ...COLORS].map(color => ({ value: color })),
-      ...(now[target].startsWith('#') ? [{ value: now[target] }] : []),
-    ]
-    const listed = live.voices.includes(current.voice) ? live.voices : [current.voice, ...live.voices]
-    // Grouped by native language, the session's first; Select draws no group
-    // headers, so each option names its language.
-    const voices = groupVoices(listed, config.language).flatMap(group => group.voices.map(voice => voice.id))
+    const colorOptions = (target: keyof LiveVoiceColors) =>
+      selectOptions([
+        ...[...THEME_COLORS, ...COLORS].map(color => ({ value: color })),
+        ...(now[target].startsWith('#') ? [{ value: now[target] }] : []),
+      ])
+    // Two steps, as a Select takes at most 64 options and Kokoro lists more:
+    // a native language (the session's first), then that language's voices.
+    const picker = voicePicker(live.voices, current.voice, config.language, editing.voiceLanguage)
+    const voices = picker.voices.map(voice => voice.id)
     const silences = SILENCES.includes(current.silenceMs) ? SILENCES : [...SILENCES, current.silenceMs].sort((a, b) => a - b)
 
     return (
       <Box flexDirection="column">
         <Text dimColor>Live voice, kept for later sessions. Esc closes.</Text>
         <Select
+          key="voice-language"
+          label="Language        "
+          options={picker.languages.map(language => ({ value: language }))}
+          value={picker.language}
+          autoFocus
+          onSelect={(value: string) => {
+            if (picker.languages.includes(value)) void setEditor($, { voiceLanguage: value })
+          }}
+        />
+        <Select
           key="voice"
           label="Voice           "
-          options={voices.map(voice => ({ value: voice, label: voiceOption(voice) }))}
-          value={current.voice}
-          autoFocus
+          options={voices.map(voice => ({ value: voice, label: voiceChoice(voice) }))}
+          {...(voices.includes(current.voice) ? { value: current.voice } : {})}
           onSelect={(value: string) => {
             if (voices.includes(value)) void setVoice($, value)
           }}

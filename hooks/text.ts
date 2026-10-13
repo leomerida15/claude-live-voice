@@ -225,6 +225,42 @@ export function groupVoices(ids: readonly string[], sessionLanguage: string): { 
     .map(([language, voices]) => ({ language, voices: voices.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)) }))
 }
 
+/** The most options the engine takes in one `Select` (it refuses the whole tree past it). */
+export const MAX_SELECT_OPTIONS = 64
+
+/** A Select's options held to what the engine takes: the first 64, in the order given. */
+export function selectOptions<T>(options: readonly T[]): T[] {
+  return options.slice(0, MAX_SELECT_OPTIONS)
+}
+
+/** A voice as an option under its language: `Dora (female)`. */
+export function voiceChoice(id: string): string {
+  const voice = describeVoice(id)
+
+  return `${voice.name} (${voice.gender})`
+}
+
+/**
+ * The settings dialog's two-step voice picker: the native languages present
+ * (as `groupVoices` orders them), the language shown (`wanted` when present,
+ * else the voice's own, else the first), and that language's voices, at most
+ * 64. The voice itself is always listed.
+ */
+export function voicePicker(
+  ids: readonly string[],
+  voice: string,
+  sessionLanguage: string,
+  wanted?: string,
+): { languages: string[]; language: string; voices: VoiceInfo[] } {
+  const groups = groupVoices(ids.includes(voice) ? ids : [voice, ...ids], sessionLanguage)
+  const languages = selectOptions(groups.map(group => group.language))
+  const own = describeVoice(voice).language
+  const language = [wanted, own, languages[0]].find(one => one !== undefined && languages.includes(one)) ?? own
+  const voices = selectOptions(groups.find(group => group.language === language)?.voices ?? [])
+
+  return { languages, language, voices }
+}
+
 const SAMPLES: Record<string, string> = { e: 'Hola, así suena esta voz.' }
 const ENGLISH_SAMPLE = 'Hi, this is how this voice sounds.'
 

@@ -55,9 +55,11 @@ export type LiveVoiceSettings = { voice: string; animation: LiveVoiceAnimation; 
 
 /**
  * The settings dialog's color editor: which color the theme swatches and the
- * R G B bars change, and how far one press moves a channel (1 fine, 16 coarse).
+ * R G B bars change, and how far one press moves a channel (1 fine, 16 coarse);
+ * and the native language whose voices the voice picker lists (absent: the
+ * current voice's). Picking a language does not change the voice.
  */
-export type LiveVoiceEditor = { target: keyof LiveVoiceColors; step: 1 | 16 }
+export type LiveVoiceEditor = { target: keyof LiveVoiceColors; step: 1 | 16; voiceLanguage?: string }
 
 declare module 'claude-code' {
   interface PluginState {

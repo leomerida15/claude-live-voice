@@ -1,6 +1,17 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { describeVoice, groupVoices, parseLiveCommand, sampleText, voiceLabel, voiceOption } from '../hooks/text.ts'
+import {
+  MAX_SELECT_OPTIONS,
+  describeVoice,
+  groupVoices,
+  parseLiveCommand,
+  sampleText,
+  selectOptions,
+  voiceChoice,
+  voiceLabel,
+  voiceOption,
+  voicePicker,
+} from '../hooks/text.ts'
 
 describe('Kokoro voices', () => {
   test('describeVoice reads the native language, the gender and the name from the id', () => {
@@ -52,6 +63,36 @@ describe('Kokoro voices', () => {
     expect(sampleText('af_heart')).toBe('Hi, this is how this voice sounds.')
     expect(sampleText('bm_george')).toBe('Hi, this is how this voice sounds.')
     expect(sampleText('ff_siwis')).toBe('Hi, this is how this voice sounds.')
+  })
+
+  test('selectOptions caps a list at the 64 options a Select takes, order kept', () => {
+    expect(MAX_SELECT_OPTIONS).toBe(64)
+    const many = Array.from({ length: 70 }, (_, at) => `af_v${String(at).padStart(2, '0')}`)
+    expect(selectOptions(many)).toEqual(many.slice(0, 64))
+    expect(selectOptions(['ef_dora'])).toEqual(['ef_dora'])
+  })
+
+  test('voiceChoice names a voice under its language: Dora (female)', () => {
+    expect(voiceChoice('ef_dora')).toBe('Dora (female)')
+    expect(voiceChoice('am_v0adam')).toBe('Adam (male)')
+  })
+
+  test('voicePicker shows the voice\'s own language by default, a wanted one when listed', () => {
+    const ids = ['af_heart', 'bm_george', 'em_alex', 'ef_dora']
+    const own = voicePicker(ids, 'ef_dora', 'es')
+    expect(own.languages).toEqual(['Spanish', 'American English', 'British English'])
+    expect(own.language).toBe('Spanish')
+    expect(own.voices.map(voice => voice.id)).toEqual(['em_alex', 'ef_dora'])
+    expect(voicePicker(ids, 'ef_dora', 'es', 'British English').voices.map(voice => voice.id)).toEqual(['bm_george'])
+    expect(voicePicker(ids, 'ef_dora', 'es', 'Klingon').language).toBe('Spanish')
+  })
+
+  test('voicePicker lists a voice Kokoro did not, and caps a language at 64 voices', () => {
+    expect(voicePicker(['af_heart'], 'ff_siwis', 'es').languages).toEqual(['American English', 'French'])
+    const many = Array.from({ length: 70 }, (_, at) => `af_v${String(at).padStart(2, '0')}`)
+    const picker = voicePicker(many, 'af_v00', 'en')
+    expect(picker.voices).toHaveLength(64)
+    expect(picker.voices[0]?.id).toBe('af_v00')
   })
 
   test('/live config test parses', () => {

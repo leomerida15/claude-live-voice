@@ -171,17 +171,18 @@ test('the settings dialog lists Kokoro\'s voices by native language, Spanish fir
   await settle(world)
   await $.command.run(live('config'))
   const pane = await $.ui.mount({ plugin: 'live-voice', surface: 'terminal', ...PANE })
+  const language = await pane.find({ key: 'voice-language' })
+  expect((language?.props.options as { value: string }[]).map(option => option.value)).toEqual([
+    'Spanish',
+    'American English',
+    'British English',
+  ])
+  expect(language?.props.value).toBe('Spanish')
   const voice = await pane.find({ key: 'voice' })
   const values = (voice?.props.options as { value: string }[]).map(option => option.value)
-  expect(values).toEqual(['em_alex', 'ef_dora', 'em_santa', 'af_heart', 'bm_george'])
+  expect(values).toEqual(['em_alex', 'ef_dora', 'em_santa'])
   const labels = (voice?.props.options as { label: string }[]).map(option => option.label)
-  expect(labels).toEqual([
-    'Spanish — Alex (male)',
-    'Spanish — Dora (female)',
-    'Spanish — Santa (male)',
-    'American English — Heart (female)',
-    'British English — George (male)',
-  ])
+  expect(labels).toEqual(['Alex (male)', 'Dora (female)', 'Santa (male)'])
   expect(voice?.props.value).toBe('ef_dora')
   const texts = (await pane.findAll({ type: 'Text' })).map(one => one.text)
   expect(texts.some(text => text.includes('Dora · Spanish · female (ef_dora)'))).toBe(true)
@@ -210,7 +211,9 @@ test('the settings dialog falls back to a built-in voice list when Kokoro does n
   const pane = await $.ui.mount({ plugin: 'live-voice', surface: 'terminal', ...PANE })
   const values = ((await pane.find({ key: 'voice' }))?.props.options as { value: string }[]).map(option => option.value)
   expect(values.slice(0, 3)).toEqual(['em_alex', 'ef_dora', 'em_santa'])
-  expect(values.length).toBeGreaterThan(3)
+  const languages = ((await pane.find({ key: 'voice-language' }))?.props.options as { value: string }[]).map(option => option.value)
+  expect(languages[0]).toBe('Spanish')
+  expect(languages.length).toBeGreaterThan(1)
   await pane.unmount()
 })
 
