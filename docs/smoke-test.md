@@ -20,18 +20,21 @@ Mark each step pass or fail and note what you heard or saw on a failure.
 
 - [ ] `claude --plugin-dir .` from the repo root, then `/live`.
 - [ ] The answer is "Live voice on. Speak; voice ef_dora."
-- [ ] The band reads `🎙 live · listening`.
+- [ ] The band's audio bar reads `🔴🎙  m: 🔇 Mute  s: ⏹ Stop  │` and a flat line, the dot blinking;
+  the text bar below reads `listening · ef_dora` with `alt+space mute · alt+s stop` on the right.
 - [ ] `pgrep -af listen.py` shows exactly one listener, carrying this session's tag.
 
 ## 2. One spoken turn
 
 - [ ] Say a short question, for example "¿Qué hora es en Madrid?".
 - [ ] The band goes `transcribing` -> `thinking` -> `speaking`, then back to `listening`.
-- [ ] While `listening`, the meter next to the state rises as you talk and falls flat in silence; while
-  `speaking` it shows a moving wave that stops when the reply ends.
+- [ ] While `listening`, the audio bar's wave is green and scrolls in from the right as you talk, flat in
+  silence; while `speaking` it is a moving cyan wave that stops when the reply ends; otherwise a flat dim
+  line. The wave fills the band's width without wrapping, and the controls stay before it.
 - [ ] The prompt shown in the transcript is what you said.
 - [ ] The reply is spoken sentence by sentence, starting before Claude finishes writing.
-- [ ] The band shows `N queued` while sentences wait.
+- [ ] The text bar shows `N queued` while sentences wait.
+- [ ] Narrow the terminal: the chord hint disappears first, then the wave shrinks; Mute and Stop stay whole.
 
 ## 3. Echo guard (speakers on)
 
@@ -53,7 +56,7 @@ Mark each step pass or fail and note what you heard or saw on a failure.
 
 ## 6. Controls
 
-- [ ] `/live mute`: band shows `muted`; speaking produces no prompt. `/live mute` again unmutes.
+- [ ] `/live mute`: the text bar shows `muted`, the audio bar a steady red `🔇` with no dot; speaking produces no prompt. `/live mute` again unmutes.
 - [ ] With the chords from the README bound, `Alt+Space` in the prompt toggles mute and `Alt+S`
   stops speech, without focusing the band. Typing in the prompt is not affected.
 - [ ] `ctrl+x tab` focuses the band; `m` toggles mute; `s` stops speech mid-sentence.

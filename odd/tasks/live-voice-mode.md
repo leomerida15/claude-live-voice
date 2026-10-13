@@ -61,6 +61,14 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
   while listening; the mod keeps a short history and the band draws it as a sparkline (`▁▂▃▅▇`) while
   listening; while speaking, a looping wave animation driven by `$.clock`, stopped when speech ends.
   Redraw rate bounded; no level lines while paused. Test-first (python + engine).
+- [x] T13 Band layout (user feedback 2026-10-13, design refined twice the same day): two rows. The audio
+  bar: a blinking red dot (~500 ms) and the mic (`🔇` in red, steady, while muted), the plain Mute and
+  Stop Buttons (same `key`, `hotkey`, `action`; emoji labels), a dim `│`, then the wave filling the rest
+  of `bodyColumns` (emoji counted 2 cells, margin 2): the mic meter while listening (green, scrolling,
+  newest right), the moving wave while speaking (cyan), else a flat dim line. The text bar: dim
+  `<state> · <voice>` (+ `N queued`), right-aligned `alt+space mute · alt+s stop`. Narrow: the hint goes
+  first, then the wave shrinks (omitted under 4 cells); controls never cut. History capped at 200
+  levels, appended only while listening (R3-002). Test-first (engine + helpers).
 
 ## Acceptance criteria
 - `claude plugin validate .` passes; type-check passes; `claude plugin test .` passes.
@@ -74,6 +82,7 @@ ask-on-risk. Forecast ~600 authored lines.
 - T1–T4: delegated direct (writer trigger: 2+ non-trivial files).
 - T5: inline (one doc file, already understood). T6–T9: delegated direct (module + tests + types/scripts).
   T10: inline (one doc file). T12: delegated direct (writer trigger: listen.py, register.tsx, text.ts, tests).
+  T13: delegated direct (writer trigger: register.tsx, text.ts, types, tests).
 
 ## Out of scope (hardening)
 Barge-in, global keybindings, cloud providers.
@@ -193,7 +202,34 @@ Barge-in, global keybindings, cloud providers.
   GREEN: python 15 OK; `claude plugin test .` 45 pass, 0 fail; `claude plugin validate .` passed (expected
   CLAUDE.md warning); `tsc -p <scratchpad tsconfig>` no output; `bash -n scripts/speak.sh` ok. Standalone:
   a Kokoro speech WAV fed via `--stdin` reads `0.00` over the room and `0.25-0.94` over the voice.
-  Commit: this commit. Not verified: the meter with a real microphone and terminal (smoke test).
+  Commit: cb7e0f6. Not verified: the meter with a real microphone and terminal (smoke test).
+- T12 native review: APPROVED, authority burned. Non-blocking follow-ups, not scheduled unless noted:
+  - R3-001 the borrowed keybinding actions (`permission:toggleDebug`, `footer:dismiss`) are unverified
+    against a live engine (only the test kit accepts them).
+  - R3-002 levels arriving while transcribing/thinking leak into the next meter. Fixed in T13.
+  - R3-003 the wave timer's `void publish($)` has no catch. Fixed in T13 (the band ticker catches).
+  - R4 Stop cancelled the wave while `speakNext` may keep playing newly enqueued sentences. Moot after
+    T13: the ticker runs while live voice is on and moves the wave whenever the state is `speaking`.
+  - R2 suggestions (naming, helper duplication); not scheduled.
+- T13 done (route: delegated direct; register.tsx + text.ts + types + tests + docs). New helpers in
+  `hooks/text.ts`: `meterRow(levels, width)`, `waveRow(tick, width)`, `flatRow(width)` (all exactly
+  `width` cells), `cellWidth` (emoji 2, joiners/selectors 0), `audioBarWaveWidth(columns, parts)`,
+  `METER_CAP = 200`; `sparkline`/`METER_WIDTH` removed. `$.state` `status` now holds `levels: number[]`
+  (at most 200, [] unless listening), `wave: number` and `dot: boolean` in place of `meter: string`; the
+  band draws at its own width, reading an old state's missing `levels` as []. One `$.clock.every(125)`
+  ticker runs while live voice is on (started in `start`, cancelled in `stop`, `/live off`, session end
+  and a reload): it moves the wave each tick while speaking and blinks the dot every 4 ticks, publishing
+  only when one of them changed and the dot is shown (muted idle: no writes). `hearLevels` drops levels
+  unless the state is `listening`.
+  RED: `claude plugin test .` -> text.test.ts failed to load (missing helpers) and 4 band tests failed
+  (meter not a full-width row, no plain buttons, no capped history); after the first design change
+  again a load failure and 4 band fails; mutating `hearLevels` back to the T12 append-then-maybe-publish
+  made "levels heard while not listening do not reach the next meter" fail (`▁…███` vs a flat row).
+  GREEN: `claude plugin test .` 52 pass, 0 fail; python 15 OK; `claude plugin validate .` passed (one
+  expected CLAUDE.md warning); `tsc -p <scratchpad tsconfig>` no output; `bash -n scripts/speak.sh` ok.
+  Commit: this commit. Not verified: real terminal cell widths of `🎙`/`⏹` (counted 2, margin 2), the
+  plain Button's drawn `m: ` prefix width (counted 3; the test kit's text omits it), colors and blink in
+  a live terminal (smoke test).
 
 ## Next step
 The human runs `docs/smoke-test.md` with the microphone and reports failed steps. Not verified yet:

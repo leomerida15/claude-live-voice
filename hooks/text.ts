@@ -244,8 +244,11 @@ export function parseListenerLine(line: string): ListenerLine | undefined {
 const BLOCKS = '▁▂▃▄▅▆▇█'
 const LOWEST = '▁'
 
-/** Width of the band's meter, in cells. */
-export const METER_WIDTH = 8
+/** How many mic levels the meter keeps: the widest band it scrolls across. */
+export const METER_CAP = 200
+
+/** A width in whole cells, never negative. */
+const cells = (width: number) => Math.max(0, Math.trunc(Number.isFinite(width) ? width : 0))
 
 /** A level (clamped to 0..1) as one of eight block heights. */
 export function levelGlyph(level: number): string {
@@ -254,11 +257,17 @@ export function levelGlyph(level: number): string {
   return BLOCKS[Math.round(clamped * (BLOCKS.length - 1))] ?? LOWEST
 }
 
-/** The newest `width` levels as blocks, oldest left, padded with the lowest block. */
-export function sparkline(levels: readonly number[], width = METER_WIDTH): string {
-  const glyphs = levels.slice(-width).map(levelGlyph).join('')
+/** A row of the lowest block, exactly `width` cells: the meter at rest. */
+export function flatRow(width: number): string {
+  return LOWEST.repeat(cells(width))
+}
 
-  return LOWEST.repeat(Math.max(0, width - glyphs.length)) + glyphs
+/** The newest levels as blocks, exactly `width` cells: newest right, padded with the lowest block on the left. */
+export function meterRow(levels: readonly number[], width: number): string {
+  const size = cells(width)
+  const glyphs = size === 0 ? '' : levels.slice(-size).map(levelGlyph).join('')
+
+  return flatRow(size - glyphs.length) + glyphs
 }
 
 const WAVE = '▂▃▅▇▅▃▂▁'
@@ -268,4 +277,39 @@ export function wave(tick: number): string {
   const shift = ((Math.trunc(tick) % WAVE.length) + WAVE.length) % WAVE.length
 
   return WAVE.slice(shift) + WAVE.slice(0, shift)
+}
+
+/** Frame `tick` of the speaking wave tiled across exactly `width` cells. */
+export function waveRow(tick: number, width: number): string {
+  const size = cells(width)
+  const frame = wave(tick)
+
+  return frame.repeat(Math.ceil(size / frame.length)).slice(0, size)
+}
+
+/**
+ * The cells a terminal gives text, erring wide: emoji and pictographs (and
+ * a symbol an emoji variation selector follows) count two, the variation
+ * selectors and joiners none, anything else one.
+ */
+export function cellWidth(text: string): number {
+  let width = 0
+  for (const char of text) {
+    const code = char.codePointAt(0) ?? 0
+    if (code === 0x200d || (code >= 0xfe00 && code <= 0xfe0f)) continue
+    const isWide = code >= 0x1f000 || (code >= 0x2300 && code <= 0x23ff) || (code >= 0x2600 && code <= 0x27bf)
+    width += isWide ? 2 : 1
+  }
+
+  return width
+}
+
+/**
+ * The audio bar's wave width: the columns less its other parts, a gap after
+ * each, and a margin for a terminal that draws an emoji wider than counted.
+ */
+export function audioBarWaveWidth(columns: number, parts: readonly string[], gap = 1, margin = 2): number {
+  const used = parts.reduce((sum, part) => sum + cellWidth(part) + gap, 0)
+
+  return cells(columns - used - margin)
 }

@@ -6,28 +6,33 @@ import {
   SentenceChunker,
   USAGE,
   claim,
+  audioBarWaveWidth,
+  cellWidth,
   cleanTranscript,
-  METER_WIDTH,
+  flatRow,
   killPattern,
+  METER_CAP,
+  meterRow,
   parseListenerLine,
   parseLiveCommand,
   safeSessionId,
   sessionTag,
-  sparkline,
   tunable,
-  wave,
+  waveRow,
 } from './text.ts'
 import type { SubmittedPrompt } from './text.ts'
 
 type $ = EngineInterface
 type Child = HookStream<ProcessSpawnChunk, ProcessSpawnResult>
 
-const OFF: LiveVoiceStatus = { isOn: false, state: 'off', queue: 0, voice: '', meter: '' }
+const OFF: LiveVoiceStatus = { isOn: false, state: 'off', queue: 0, voice: '', levels: [], wave: 0, dot: false }
 const status = atom({ plugin: 'live-voice', key: 'status' } as const, OFF)
 
 const STT_TIMEOUT_MS = 60_000
-// One frame of the speaking wave per period: about 7 redraws a second.
-const WAVE_MS = 150
+// The band's clock while live voice is on: the speaking wave moves one frame
+// a tick (8 redraws a second), the live dot blinks every BLINK_TICKS ticks.
+const TICK_MS = 125
+const BLINK_TICKS = 4
 
 // Runtime state of the loop. Children die with the module on a reload, so
 // this living in the module (not in $.state) loses nothing that survives.
@@ -44,12 +49,17 @@ const live = {
   prompts: [] as SubmittedPrompt[],
   // Live turns by id, each with the chunker of its spoken reply.
   turns: new Map<string, SentenceChunker>(),
-  // The newest mic levels (0..1) from listen.py, for the meter.
+  // The newest mic levels (0..1) from listen.py while listening, at most
+  // METER_CAP, for the meter.
   levels: [] as number[],
-  // The speaking wave's frame and the timer that moves it.
+  // The band's ticks, the speaking wave's frame, the live dot, and the timer
+  // that moves them while live voice is on.
+  ticks: 0,
   waveTick: 0,
-  waveTimer: undefined as Timer | undefined,
-  // The meter as last published, so an unchanged one is not redrawn.
+  dot: true,
+  ticker: undefined as Timer | undefined,
+  // The levels as last published, drawn at full history width, so levels
+  // that draw the same are not redrawn.
   meter: '',
 }
 
@@ -82,43 +92,53 @@ const stateNow = (): LiveVoiceState => {
   return 'listening'
 }
 
-const meterNow = (state: LiveVoiceState) =>
-  state === 'listening' ? sparkline(live.levels) : state === 'speaking' ? wave(live.waveTick) : ''
-
 const publish = ($: $) => {
   const state = stateNow()
   // Levels heard before a pause (speech, mute, an utterance) are stale after it.
   if (state !== 'listening') live.levels = []
-  live.meter = meterNow(state)
+  live.meter = meterRow(live.levels, METER_CAP)
 
   return update($, status, () => ({
     isOn: live.isOn,
     state,
     queue: live.queue.length,
     voice: live.voice,
-    meter: live.meter,
+    levels: [...live.levels],
+    wave: live.waveTick,
+    dot: live.dot,
   }))
 }
 
-// Keeps the newest levels; redraws only when the meter, as drawn, changed.
+// Keeps the newest levels, only while listening: ones heard in any other
+// state (muted, transcribing, thinking) would leak into the next meter.
+// Redraws only when the meter, as drawn, changed.
 const hearLevels = async ($: $, levels: number[]) => {
-  live.levels = [...live.levels, ...levels].slice(-METER_WIDTH)
-  const state = stateNow()
-  if (state === 'listening' && meterNow(state) !== live.meter) await publish($)
+  if (stateNow() !== 'listening') return
+  live.levels = [...live.levels, ...levels].slice(-METER_CAP)
+  if (meterRow(live.levels, METER_CAP) !== live.meter) await publish($)
 }
 
-const startWave = ($: $) => {
-  live.waveTimer?.cancel()
-  live.waveTick = 0
-  live.waveTimer = $.clock.every(WAVE_MS, () => {
-    live.waveTick += 1
-    if (stateNow() === 'speaking') void publish($)
+// Moves the wave while speaking and blinks the dot while not muted; redraws
+// only when one of them changed. One timer, started with live voice and
+// stopped with it.
+const startTicker = ($: $) => {
+  stopTicker()
+  live.ticks = 0
+  live.dot = true
+  live.ticker = $.clock.every(TICK_MS, () => {
+    live.ticks += 1
+    const dot = Math.floor(live.ticks / BLINK_TICKS) % 2 === 0
+    const hasBlinked = dot !== live.dot
+    live.dot = dot
+    const isSpeaking = stateNow() === 'speaking'
+    if (isSpeaking) live.waveTick += 1
+    if (isSpeaking || (hasBlinked && !live.isMuted)) void publish($).catch(() => undefined)
   })
 }
 
-const stopWave = () => {
-  live.waveTimer?.cancel()
-  live.waveTimer = undefined
+const stopTicker = () => {
+  live.ticker?.cancel()
+  live.ticker = undefined
 }
 
 // The listener discards audio while the flag file holds "1".
@@ -222,7 +242,7 @@ const listen = async ($: $, child: Child) => {
 const speakNext = async ($: $) => {
   if (live.isSpeaking) return
   live.isSpeaking = true
-  startWave($)
+  live.waveTick = 0
   await writePause($)
   await publish($)
   while (live.isOn && live.queue.length > 0) {
@@ -247,7 +267,6 @@ const speakNext = async ($: $) => {
     }
     live.player = undefined
   }
-  stopWave()
   await $.clock.sleep(config.echoTailMs).catch(() => undefined)
   live.isSpeaking = false
   if (live.isOn) await writePause($)
@@ -266,7 +285,6 @@ const enqueue = ($: $, sentences: string[]) => {
 
 const silence = async ($: $) => {
   live.queue = []
-  stopWave()
   const player = live.player
   live.player = undefined
   if (player !== undefined) {
@@ -282,6 +300,7 @@ const start = async ($: $) => {
   live.isMuted = false
   await $.process.run(['mkdir', '-p', config.dir])
   await writePause($)
+  startTicker($)
   const child = $.process.spawn({
     argv: [
       'python3', '-I', `${config.scripts}/listen.py`,
@@ -312,7 +331,7 @@ const forgetChildren = () => {
   live.prompts = []
   live.turns.clear()
   live.levels = []
-  stopWave()
+  stopTicker()
 }
 
 // After session.start: kills this session's orphaned children, then, when
@@ -331,6 +350,7 @@ const recover = async ($: $, was: LiveVoiceStatus) => {
 
 const stop = async ($: $) => {
   live.isOn = false
+  stopTicker()
   live.prompts = []
   live.turns.clear()
   const listener = live.listener
@@ -353,6 +373,12 @@ const describe = () =>
 // ~/.claude/keybindings.json presses the button from the prompt.
 const MUTE_ACTION = 'permission:toggleDebug'
 const STOP_ACTION = 'footer:dismiss'
+
+// The audio bar's separator before the wave, the narrowest wave worth
+// drawing, and the text bar's hint of the chords suggested in the README.
+const BAR = '│'
+const MIN_WAVE = 4
+const HINT = 'alt+space mute · alt+s stop'
 
 export const register: Register = (on, options) => {
   live.voice = String(options.voice ?? live.voice)
@@ -475,28 +501,59 @@ export const register: Register = (on, options) => {
       return next(e)
     }
     const { Box, Button, Text } = $.ui.resolve(e)
+    const columns = e.props.bodyColumns
+    // A state from before a reload may lack the levels; the next publish fills them.
+    const levels = Array.isArray(now.levels) ? now.levels : []
+    // The live dot (blank while dark, so nothing shifts) then the mic; muted,
+    // a steady red muted mic.
+    const mic = live.isMuted ? '🔇' : `${now.dot === true ? '🔴' : '  '}🎙`
+    const muteLabel = live.isMuted ? '🎙 Unmute' : '🔇 Mute'
+    const stopLabel = '⏹ Stop'
+    const width = audioBarWaveWidth(columns, [mic, `m: ${muteLabel}`, `s: ${stopLabel}`, BAR])
+    const wave =
+      now.state === 'listening' ? meterRow(levels, width) : now.state === 'speaking' ? waveRow(now.wave ?? 0, width) : flatRow(width)
+    // Who is talking: the person green, the agent cyan, nobody dim.
+    const waveColor = now.state === 'listening' ? 'green' : now.state === 'speaking' ? 'cyan' : undefined
     const queued = now.queue > 0 ? ` · ${now.queue} queued` : ''
-    const meter = now.meter ?? ''
+    const about = `${now.state} · ${now.voice}${queued}`
+    // The hint goes first when the text bar is narrow.
+    const hasHint = cellWidth(about) + 2 + cellWidth(HINT) <= columns
 
+    // The audio bar (dot and mic, the controls, the wave across the rest),
+    // then the text bar; with room for one row only, the audio bar, which
+    // holds the controls. The controls are never cut: the wave gives way.
     return (
-      <Box>
-        <Text>
-          🎙 live · <Text bold>{now.state}</Text>
-          {meter !== '' ? <Text color="cyan"> {meter}</Text> : null}
-          <Text dimColor>{queued} · {now.voice} </Text>
-        </Text>
-        <Button
-          key="mute"
-          hotkey="m"
-          action={MUTE_ACTION}
-          label={live.isMuted ? 'Unmute' : 'Mute'}
-          onPress={async () => {
-            live.isMuted = !live.isMuted
-            await writePause($)
-            await publish($)
-          }}
-        />
-        <Button key="stop" hotkey="s" action={STOP_ACTION} label="Stop" onPress={() => void silence($)} />
+      <Box flexDirection="column">
+        <Box flexDirection="row" gap={1}>
+          <Text color={live.isMuted ? 'red' : undefined}>{mic}</Text>
+          <Button
+            key="mute"
+            plain
+            hotkey="m"
+            action={MUTE_ACTION}
+            label={muteLabel}
+            onPress={async () => {
+              live.isMuted = !live.isMuted
+              await writePause($)
+              await publish($)
+            }}
+          />
+          <Button key="stop" plain hotkey="s" action={STOP_ACTION} label={stopLabel} onPress={() => void silence($)} />
+          <Text dimColor>{BAR}</Text>
+          {width >= MIN_WAVE ? (
+            <Text color={waveColor} dimColor={waveColor === undefined} wrap="truncate-end">
+              {wave}
+            </Text>
+          ) : null}
+        </Box>
+        {e.props.maxRows >= 2 ? (
+          <Box flexDirection="row" justifyContent="space-between">
+            <Text dimColor wrap="truncate-end">
+              {about}
+            </Text>
+            {hasHint ? <Text dimColor>{HINT}</Text> : null}
+          </Box>
+        ) : null}
       </Box>
     )
   })

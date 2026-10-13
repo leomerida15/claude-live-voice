@@ -48,13 +48,23 @@ claude --plugin-dir /path/to/claude-live-voice
 | `/live voice <name>` | Changes the Kokoro voice, for example `ef_dora` or `em_alex`. |
 | `/live status` | Shows the current state, the voice and the queue. |
 
-While live mode is on, a band above the prompt shows
-`🎙 live · <state>`, where the state is `listening`, `transcribing`, `thinking`,
-`speaking` or `muted`. Next to the state is a small meter: while listening it is
-the live microphone level of the last second (`▁▁▃▅█▇▃▁`), so you can see the mic
-hears you; while Claude speaks it is a looping wave. The band also shows how many
-sentences are waiting to be spoken and which voice is in use. Focus the band with `ctrl+x tab`, then press
-`m` to mute or unmute, or `s` to stop speaking.
+While live mode is on, a band of two rows sits above the prompt.
+
+The **audio bar** reads `🔴🎙  m: 🔇 Mute  s: ⏹ Stop  │ ▁▁▃▅█▇▃▁…`: a red dot that
+blinks while the microphone is live (a steady red `🔇` while muted), the Mute and
+Stop controls, then a wave across the rest of the band. While listening the wave
+is the live microphone level, newest on the right, in green, so you can see the
+mic hears you; while Claude speaks it is a moving cyan wave; otherwise it is a
+flat dim line.
+
+The **text bar** below reads `<state> · <voice>`, plus `N queued` while
+sentences wait to be spoken, with the suggested chords on the right
+(`alt+space mute · alt+s stop`). The state is `listening`, `transcribing`,
+`thinking`, `speaking` or `muted`. In a narrow terminal the chord hint goes
+first, then the wave shrinks; the controls are never cut.
+
+Focus the band with `ctrl+x tab`, then press `m` to mute or unmute, or `s` to
+stop speaking.
 
 To mute or stop straight from the prompt, bind chords in
 `~/.claude/keybindings.json`. A mod cannot define its own keybinding actions,

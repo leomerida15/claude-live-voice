@@ -2,18 +2,23 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import {
   CODE_OMITTED,
+  audioBarWaveWidth,
+  cellWidth,
   SentenceChunker,
   claim,
   cleanTranscript,
   killPattern,
+  flatRow,
   levelGlyph,
+  METER_CAP,
+  meterRow,
   parseListenerLine,
   parseLiveCommand,
   sessionTag,
-  sparkline,
   stripMarkdown,
   tunable,
   wave,
+  waveRow,
 } from '../hooks/text.ts'
 
 const speakAll = (pieces: string[]) => {
@@ -194,11 +199,48 @@ describe('meter', () => {
     expect(levelGlyph(9)).toBe('█')
   })
 
-  test('sparkline draws the newest levels, padded on the left to its width', () => {
-    expect(sparkline([], 4)).toBe('▁▁▁▁')
-    expect(sparkline([1, 0.5], 4)).toBe('▁▁█▅')
-    expect(sparkline([0, 0, 0, 0, 0, 1], 4)).toBe('▁▁▁█')
-    expect(sparkline([0.3])).toHaveLength(8)
+  test('meterRow draws the newest levels at exactly its width, padded on the left', () => {
+    expect(meterRow([], 4)).toBe('▁▁▁▁')
+    expect(meterRow([1, 0.5], 4)).toBe('▁▁█▅')
+    expect(meterRow([0, 0, 0, 0, 0, 1], 4)).toBe('▁▁▁█')
+    expect([...meterRow([0.3, 1], 120)]).toHaveLength(120)
+    expect(meterRow([1], 0)).toBe('')
+    expect(meterRow([1], -3)).toBe('')
+    expect(meterRow([1], 2.7)).toBe('▁█')
+  })
+
+  test('flatRow is the lowest block at exactly its width', () => {
+    expect(flatRow(3)).toBe('▁▁▁')
+    expect(flatRow(-1)).toBe('')
+  })
+
+  test('waveRow tiles the wave across exactly its width and moves with the frame', () => {
+    expect([...waveRow(0, 100)]).toHaveLength(100)
+    expect([...waveRow(5, 3)]).toHaveLength(3)
+    expect(waveRow(0, 20).startsWith(wave(0))).toBe(true)
+    expect(waveRow(1, 20)).not.toBe(waveRow(0, 20))
+    expect(waveRow(8, 20)).toBe(waveRow(0, 20))
+    expect(waveRow(0, 0)).toBe('')
+  })
+
+  test('cellWidth counts emoji as two cells and joiners as none', () => {
+    expect(cellWidth('Mute')).toBe(4)
+    expect(cellWidth('🎙🔴')).toBe(4)
+    expect(cellWidth('m: 🔇 Mute')).toBe(10)
+    expect(cellWidth('s: ⏹ Stop')).toBe(10)
+    expect(cellWidth('⏹\uFE0F')).toBe(2)
+    expect(cellWidth('')).toBe(0)
+  })
+
+  test('audioBarWaveWidth is what the parts, their gaps and the margin leave of the columns', () => {
+    // 4 + 10 + 10 + 1 cells, a gap after each of the four parts, a margin of 2.
+    expect(audioBarWaveWidth(100, ['🔴🎙', 'm: 🔇 Mute', 's: ⏹ Stop', '│'])).toBe(69)
+    expect(audioBarWaveWidth(100, ['ab'], 0, 0)).toBe(98)
+    expect(audioBarWaveWidth(10, ['🔴🎙', 'm: 🔇 Mute'])).toBe(0)
+  })
+
+  test('METER_CAP bounds the kept history', () => {
+    expect(METER_CAP).toBe(200)
   })
 
   test('wave loops through its frames at a fixed width', () => {
