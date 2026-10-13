@@ -16,8 +16,25 @@ export type LiveVoiceStatus = {
   dot: boolean
 }
 
-/** A color the band takes: one of the terminal's named colors. */
-export type LiveVoiceColor = 'red' | 'green' | 'yellow' | 'blue' | 'magenta' | 'cyan' | 'white' | 'gray'
+/** One of the terminal's named colors. */
+export type LiveVoiceNamedColor = 'red' | 'green' | 'yellow' | 'blue' | 'magenta' | 'cyan' | 'white' | 'gray'
+
+/** A theme key the band offers: drawn in the person's theme, so it follows a theme change. */
+export type LiveVoiceThemeColor =
+  | 'claude'
+  | 'success'
+  | 'suggestion'
+  | 'warning'
+  | 'error'
+  | 'permission'
+  | 'planMode'
+  | 'ide'
+  | 'remember'
+  | 'inactive'
+  | 'subtle'
+
+/** A color the band takes: a theme key, a named color, or a custom `#rrggbb` (lowercase). */
+export type LiveVoiceColor = LiveVoiceThemeColor | LiveVoiceNamedColor | `#${string}`
 
 /**
  * The band's colors, set with `/live config` and kept in `$.store` under
@@ -36,8 +53,14 @@ export type LiveVoiceAnimation = 'wave' | 'bars' | 'off'
  */
 export type LiveVoiceSettings = { voice: string; animation: LiveVoiceAnimation; silenceMs: number }
 
+/**
+ * The settings dialog's color editor: which color the theme swatches and the
+ * R G B bars change, and how far one press moves a channel (1 fine, 16 coarse).
+ */
+export type LiveVoiceEditor = { target: keyof LiveVoiceColors; step: 1 | 16 }
+
 declare module 'claude-code' {
   interface PluginState {
-    'live-voice': { status: LiveVoiceStatus; colors: LiveVoiceColors; settings: LiveVoiceSettings }
+    'live-voice': { status: LiveVoiceStatus; colors: LiveVoiceColors; settings: LiveVoiceSettings; editor: LiveVoiceEditor }
   }
 }

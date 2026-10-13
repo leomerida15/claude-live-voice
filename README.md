@@ -51,7 +51,7 @@ claude --plugin-dir /path/to/claude-live-voice
 | `/live-config` | The same dialog as `/live config`; every `/live config ...` shortcut works as `/live-config ...` (a command name cannot hold a colon, so there is no `/live:config`). |
 | `/live config voice <name>` | Sets the voice, like `/live voice`. |
 | `/live config test` | Says a short sample in the selected voice (Spanish voices in Spanish, the rest in English). |
-| `/live config <user\|agent\|dot\|idle> <color>` | Sets one color directly, for example `/live config agent magenta`. |
+| `/live config <user\|agent\|dot\|idle> <color>` | Sets one color directly: a theme color, a named color or `#rrggbb`, for example `/live config agent magenta`, `/live config user claude` or `/live config dot #ff8800`. |
 | `/live config animation <wave\|bars\|off>` | How the band's wave moves. |
 | `/live config silence <1000\|1500\|2000\|2500\|3000>` | The silence (ms) that ends what you say; restarts the listener. |
 | `/live config reset` | Restores every setting above to its default. |
@@ -122,9 +122,23 @@ with every current setting and the commands that change them.
 | `dot` | The blinking live dot and the muted mic. | `red` |
 | `idle` | The flat line while muted, transcribing or thinking. | `gray` |
 
-The colors are the terminal's named ones: `red`, `green`, `yellow`, `blue`,
-`magenta`, `cyan`, `white`, `gray`. The live dot is `●`, not an emoji, so it
-can take a color.
+A color is one of:
+
+- a **theme color**, drawn in your Claude Code theme so it follows a theme
+  change: `claude`, `success`, `suggestion`, `warning`, `error`, `permission`,
+  `planMode`, `ide`, `remember`, `inactive`, `subtle` (any case);
+- a **named color** of the terminal: `red`, `green`, `yellow`, `blue`,
+  `magenta`, `cyan`, `white`, `gray`;
+- a **custom** `#rrggbb` (or `#rgb`), kept as lowercase `#rrggbb`.
+
+In the dialog, `Edit color` picks which color the editor below it changes:
+the `Theme` row of swatches (`●` in each theme color, press one to use it),
+and the `Red`, `Green`, `Blue` bars, each with `−` and `+` (hotkeys `q`/`w`,
+`a`/`s`, `z`/`x` while the dialog has the keyboard). `1` makes a press move a
+channel by 1, `2` by 16 (the default). A theme color has no RGB here, so its
+bars start at mid gray; a named color's start at its usual RGB. `Preview`
+draws the wave in the color, and the band changes at once. The live dot is
+`●`, not an emoji, so it can take a color.
 
 ## Settings
 

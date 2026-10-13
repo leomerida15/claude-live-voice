@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, HookStream, ProcessSpawnChunk, ProcessSpawnResult, Register, Timer } from 'claude-code'
 
-import type { LiveVoiceAnimation, LiveVoiceColors, LiveVoiceSettings, LiveVoiceState, LiveVoiceStatus } from '../types'
+import type { LiveVoiceAnimation, LiveVoiceColor, LiveVoiceColors, LiveVoiceEditor, LiveVoiceSettings, LiveVoiceState, LiveVoiceStatus } from '../types'
 import {
   ANIMATIONS,
   COLORS,
@@ -11,28 +11,36 @@ import {
   FALLBACK_VOICES,
   SILENCES,
   SentenceChunker,
+  THEME_COLORS,
   USAGE,
   claim,
   audioBarWaveWidth,
   barsRow,
   cellWidth,
+  channelBar,
   cleanTranscript,
+  customBase,
   flatRow,
   groupVoices,
+  hexToRgb,
   isVoiced,
   killPattern,
   liveColors,
   liveSettings,
+  parseColor,
   parseListenerLine,
   parseLiveCommand,
   safeSessionId,
   sampleText,
   sessionTag,
+  rgbToHex,
   smoothLevel,
   sortVoices,
+  stepChannel,
   tunable,
   voiceLabel,
   voiceOption,
+  wave as waveFrame,
   waveRow,
 } from './text.ts'
 import type { SubmittedPrompt } from './text.ts'
@@ -45,6 +53,10 @@ const status = atom({ plugin: 'live-voice', key: 'status' } as const, OFF)
 const colors = atom({ plugin: 'live-voice', key: 'colors' } as const, DEFAULT_COLORS)
 const SETTINGS: LiveVoiceSettings = { voice: 'ef_dora', animation: 'wave', silenceMs: 2000 }
 const settings = atom({ plugin: 'live-voice', key: 'settings' } as const, SETTINGS)
+// The dialog's color editor: the color it changes and the channel step.
+const COARSE = 16
+const FINE = 1
+const editor = atom({ plugin: 'live-voice', key: 'editor' } as const, { target: 'user', step: COARSE } as LiveVoiceEditor)
 
 // The settings dialog's pane, and what each of its Selects is labelled.
 const CONFIG_PANE = 'live-voice-config'
@@ -54,6 +66,15 @@ const COLOR_LABELS: Record<keyof LiveVoiceColors, string> = {
   dot: 'Live dot       ',
   idle: 'Idle line      ',
 }
+// The R G B bars: each channel's name, the color its bar is drawn in, and
+// the hotkeys of its − and + buttons (unique in the pane: t tests the voice,
+// 1 and 2 set the step).
+const CHANNELS = [
+  { key: 'red', label: 'Red  ', color: '#ff0000', down: 'q', up: 'w' },
+  { key: 'green', label: 'Green', color: '#00ff00', down: 'a', up: 's' },
+  { key: 'blue', label: 'Blue ', color: '#0000ff', down: 'z', up: 'x' },
+] as const
+const BAR_CELLS = 20
 // The `$.store` keys of the settings kept beside `colors`.
 const STORED = ['voice', 'animation', 'silenceMs'] as const
 
@@ -495,8 +516,20 @@ const setColors = async ($: $, next: LiveVoiceColors) => {
 }
 
 // A pick in the colors dialog: over the colors as they are now, not as drawn.
-const pickColor = async ($: $, target: keyof LiveVoiceColors, color: LiveVoiceColors[keyof LiveVoiceColors]) =>
+const pickColor = async ($: $, target: keyof LiveVoiceColors, color: LiveVoiceColor) =>
   setColors($, { ...liveColors(await read($, colors)), [target]: color })
+
+// One − or + press on an R G B bar: the edited color, from where its bars
+// start (customBase), moved one step on that channel, set and kept at once.
+const nudgeChannel = async ($: $, channel: 0 | 1 | 2, sign: 1 | -1) => {
+  const { target, step } = await read($, editor)
+  const now = liveColors(await read($, colors))
+  const rgb = hexToRgb(customBase(now[target])) ?? [128, 128, 128]
+  rgb[channel] = stepChannel(rgb[channel], sign * step)
+  await pickColor($, target, rgbToHex(rgb))
+}
+
+const setEditor = ($: $, change: Partial<LiveVoiceEditor>) => update($, editor, now => ({ ...now, ...change }))
 
 // Keeps one setting for later sessions; a failed write says so.
 const keep = async ($: $, key: (typeof STORED)[number], value: unknown) =>
@@ -623,7 +656,7 @@ const answerLive = async ($: $, args: string) => {
       await loadVoices($)
       // A dialog: it takes the keys, Esc closes it, toasts wait behind it.
       const opened = await $.ui
-        .open({ id: CONFIG_PANE, title: 'Live voice settings', focus: true, closeOnEscape: true, holdToasts: true, rows: 12 })
+        .open({ id: CONFIG_PANE, title: 'Live voice settings', focus: true, closeOnEscape: true, holdToasts: true, rows: 22 })
         .catch(() => undefined)
       const head = opened?.isPlaced === true
         ? 'Live voice settings opened (Esc closes).'
@@ -686,13 +719,13 @@ export const register: Register = (on, options) => {
     await $.command.register({
       name: 'live',
       description: 'Hands-free voice conversation (local Whisper + Kokoro); /live config: voice, colors, animation, silence',
-      argumentHint: '[on|off|mute|status|voice <name>|config [test|voice <name>|animation <wave|bars|off>|silence <ms>|<target> <color>|reset]]',
+      argumentHint: '[on|off|mute|status|voice <name>|config [test|voice <name>|animation <wave|bars|off>|silence <ms>|<target> <theme|name|#hex>|reset]]',
       immediate: true,
     })
     await $.command.register({
       name: 'live-config',
       description: 'Live voice settings: voice, colors, animation, end-of-speech silence',
-      argumentHint: '[test|voice <name>|animation <wave|bars|off>|silence <ms>|<target> <color>|reset]',
+      argumentHint: '[test|voice <name>|animation <wave|bars|off>|silence <ms>|<target> <theme|name|#hex>|reset]',
       immediate: true,
     })
 
@@ -840,7 +873,7 @@ export const register: Register = (on, options) => {
           <Text>End silence     {current.silenceMs} ms</Text>
           {COLOR_TARGETS.map(target => (
             <Text>
-              {COLOR_LABELS[target]} {now[target]}
+              {COLOR_LABELS[target]} <Text color={now[target]}>●</Text> {now[target]}
             </Text>
           ))}
           <Text dimColor>{CONFIG_USAGE}</Text>
@@ -848,7 +881,14 @@ export const register: Register = (on, options) => {
       )
     }
     const { Select } = elements
-    const colorOptions = COLORS.map(color => ({ value: color }))
+    const editing = await read($, editor)
+    const edited = now[editing.target]
+    const rgb = hexToRgb(customBase(edited)) ?? [128, 128, 128]
+    // Theme keys, then names; a target's custom hex is offered as itself.
+    const colorOptions = (target: keyof LiveVoiceColors) => [
+      ...[...THEME_COLORS, ...COLORS].map(color => ({ value: color })),
+      ...(now[target].startsWith('#') ? [{ value: now[target] }] : []),
+    ]
     const listed = live.voices.includes(current.voice) ? live.voices : [current.voice, ...live.voices]
     // Grouped by native language, the session's first; Select draws no group
     // headers, so each option names its language.
@@ -885,14 +925,51 @@ export const register: Register = (on, options) => {
           <Select
             key={`color-${target}`}
             label={`${COLOR_LABELS[target]} `}
-            options={colorOptions}
+            options={colorOptions(target)}
             value={now[target]}
             onSelect={(value: string) => {
-              const color = COLORS.find(one => one === value)
+              const color = parseColor(value)
               if (color !== undefined) void pickColor($, target, color)
             }}
           />
         ))}
+        <Select
+          key="edit-target"
+          label="Edit color      "
+          options={COLOR_TARGETS.map(target => ({ value: target, label: COLOR_LABELS[target].trim() }))}
+          value={editing.target}
+          onSelect={(value: string) => {
+            const target = COLOR_TARGETS.find(one => one === value)
+            if (target !== undefined) void setEditor($, { target })
+          }}
+        />
+        <Box flexDirection="row" gap={1}>
+          <Text>{'  Theme         '}</Text>
+          {THEME_COLORS.map(key => (
+            <Button key={`theme-${key}`} plain onPress={() => void pickColor($, editing.target, key)}>
+              <Text color={key}>●</Text>
+            </Button>
+          ))}
+        </Box>
+        {CHANNELS.map((one, index) => (
+          <Box flexDirection="row" gap={1}>
+            <Text>{`  ${one.label}         `}</Text>
+            <Button key={`${one.key}-down`} plain hotkey={one.down} label="−" onPress={() => void nudgeChannel($, index as 0 | 1 | 2, -1)} />
+            <Text color={one.color}>{channelBar(rgb[index] ?? 0, BAR_CELLS)}</Text>
+            <Button key={`${one.key}-up`} plain hotkey={one.up} label="+" onPress={() => void nudgeChannel($, index as 0 | 1 | 2, 1)} />
+            <Text>{String(rgb[index] ?? 0).padStart(3)}</Text>
+          </Box>
+        ))}
+        <Box flexDirection="row" gap={2}>
+          <Text>{'  Step          '}</Text>
+          <Button key="step-fine" plain hotkey="1" label="fine (1)" dimColor={editing.step !== FINE} onPress={() => void setEditor($, { step: FINE })} />
+          <Button key="step-coarse" plain hotkey="2" label="coarse (16)" dimColor={editing.step !== COARSE} onPress={() => void setEditor($, { step: COARSE })} />
+        </Box>
+        <Box flexDirection="row" gap={1}>
+          <Text>{'  Preview       '}</Text>
+          <Text color={edited}>{waveFrame(0)}</Text>
+          <Text dimColor>{edited}</Text>
+        </Box>
         <Select
           key="animation"
           label="Animation       "

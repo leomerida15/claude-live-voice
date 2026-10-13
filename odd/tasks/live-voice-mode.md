@@ -104,7 +104,7 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
   and `/live config test` speak a language-matching sample with the selected voice through speak.sh (session
   tag, kill-scoped), live on or off, mic paused while it plays, "busy" while live voice is speaking. The
   `/live config` summary describes the voice. Test-first.
-- [ ] T22 Theme colors + custom RGB + hex: each color target takes a theme key (follows the person's theme),
+- [x] T22 Theme colors + custom RGB + hex: each color target takes a theme key (follows the person's theme),
   a named color, or `#rrggbb`/`#rgb` (normalized lowercase `#rrggbb`); defaults unchanged. Pure `parseColor`,
   `hexToRgb`, `rgbToHex`, `stepChannel`, `channelBar`. Dialog: a target picker, a row of theme swatches, R/G/B
   bars with −/+ (hotkeys q/w, a/s, z/x), step `1` fine (1) / `2` coarse (16, default), a live preview. Shortcut
@@ -378,6 +378,19 @@ Barge-in, global keybindings, cloud providers.
   sample plays (live on), so the listener does not take the sample for speech; a live reply that starts during
   a sample stops the sample (no overlap). Not verified: real playback and the dialog in a live terminal.
   Commit: see git log (`feat: group voices by native language and test the selected voice`).
+
+- T22 done (route: delegated direct). RED: `claude plugin test .` -> 87 pass, 4 fail (colors.test.ts did not load:
+  `parseColor`, `THEME_COLORS`, `channelBar`, ... missing; the hex/theme shortcut, the usage kinds and the dialog
+  editor engine tests). GREEN: 99 pass, 0 fail. `claude plugin validate .` passed (1 expected CLAUDE.md warning);
+  python 23 OK; `bash -n scripts/speak.sh` ok; tsc no output. Decisions: the theme keys offered (all verified in
+  the d.ts `ThemeKey`): claude, success, suggestion, warning, error, permission, planMode, ide, remember,
+  inactive, subtle; parsed in any case, stored as the theme spells them. `LiveVoiceColor` is now theme | named |
+  `#${string}`. The editor's target and step live in a new `$.state` key `editor` (a module variable would not
+  redraw the pane); each − / + press sets and keeps the color at once. A theme key has no RGB the mod can know,
+  so its bars start at mid gray (`#808080`); named colors start at their usual RGB. The four color pickers now
+  list theme keys and names (and a target's own hex). Pane rows requested: 22 (was 12). Defaults unchanged.
+  Not verified: how a hex and a theme key draw in a live terminal, the hotkeys with the pane focused.
+  Commit: see git log (`feat: theme, named and custom RGB colors in /live config`).
 
 ## Next step
 The human runs `docs/smoke-test.md` with the microphone and reports failed steps. Not verified yet:

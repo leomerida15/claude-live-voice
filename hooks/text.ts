@@ -1,7 +1,7 @@
 // Pure text helpers of the live-voice mod: command parsing, transcript
 // filtering, markdown stripping and sentence chunking for speech.
 
-import type { LiveVoiceAnimation, LiveVoiceColor, LiveVoiceColors } from '../types'
+import type { LiveVoiceAnimation, LiveVoiceColor, LiveVoiceColors, LiveVoiceNamedColor, LiveVoiceThemeColor } from '../types'
 
 export const USAGE = 'Usage: /live [on|off|mute|status|voice <name>|config]'
 
@@ -10,7 +10,86 @@ export const COLOR_TARGETS = ['user', 'agent', 'dot', 'idle'] as const
 export type ColorTarget = (typeof COLOR_TARGETS)[number]
 
 /** The terminal's named colors the band offers. */
-export const COLORS: readonly LiveVoiceColor[] = ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white', 'gray']
+export const COLORS: readonly LiveVoiceNamedColor[] = ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white', 'gray']
+
+/** The theme keys the band offers: each drawn in the person's theme. */
+export const THEME_COLORS: readonly LiveVoiceThemeColor[] = [
+  'claude', 'success', 'suggestion', 'warning', 'error', 'permission', 'planMode', 'ide', 'remember', 'inactive', 'subtle',
+]
+
+const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i
+
+/**
+ * A color as the band takes it, or undefined: a theme key in any case (kept
+ * as the theme spells it, `planMode`), a named color (lowercase), or `#rgb` /
+ * `#rrggbb` (as lowercase `#rrggbb`).
+ */
+export function parseColor(value: unknown): LiveVoiceColor | undefined {
+  if (typeof value !== 'string') return undefined
+  const lower = value.toLowerCase()
+  const theme = THEME_COLORS.find(key => key.toLowerCase() === lower)
+  if (theme !== undefined) return theme
+  const named = COLORS.find(name => name === lower)
+  if (named !== undefined) return named
+  if (!HEX.test(lower)) return undefined
+  const digits = lower.slice(1)
+
+  return `#${digits.length === 3 ? [...digits].map(digit => digit + digit).join('') : digits}`
+}
+
+/** A color's red, green and blue (0..255). */
+export type Rgb = [number, number, number]
+
+/** `#rrggbb` (or `#rgb`) as its three channels; anything else undefined. */
+export function hexToRgb(hex: string): Rgb | undefined {
+  const color = parseColor(hex)
+  if (color === undefined || !color.startsWith('#')) return undefined
+
+  return [1, 3, 5].map(at => parseInt(color.slice(at, at + 2), 16)) as Rgb
+}
+
+const channel = (value: number) => Math.min(255, Math.max(0, Math.round(Number.isFinite(value) ? value : 0)))
+
+/** Three channels (each rounded and clamped to 0..255) as lowercase `#rrggbb`. */
+export function rgbToHex(rgb: Rgb): `#${string}` {
+  return `#${rgb.map(value => channel(value).toString(16).padStart(2, '0')).join('')}`
+}
+
+/** A channel moved by `delta`, clamped to 0..255. */
+export function stepChannel(value: number, delta: number): number {
+  return channel(value + delta)
+}
+
+/** A channel as a bar of `width` cells: `█` in proportion to the value (0..255), `░` for the rest. */
+export function channelBar(value: number, width: number): string {
+  const size = cells(width)
+  const filled = Math.round((channel(value) / 255) * size)
+
+  return '█'.repeat(filled) + '░'.repeat(size - filled)
+}
+
+// Where the R G B bars start for a named color: the usual RGB of each name.
+const NAMED_RGB: Record<LiveVoiceNamedColor, `#${string}`> = {
+  red: '#ff0000',
+  green: '#00ff00',
+  yellow: '#ffff00',
+  blue: '#0000ff',
+  magenta: '#ff00ff',
+  cyan: '#00ffff',
+  white: '#ffffff',
+  gray: '#808080',
+}
+
+/**
+ * Where the R G B bars start for a color: a hex itself, a named color's usual
+ * RGB, mid gray for a theme key (its RGB is the person's theme's, unknown here).
+ */
+export function customBase(color: LiveVoiceColor): `#${string}` {
+  const parsed = parseColor(color)
+  if (parsed?.startsWith('#') === true) return parsed as `#${string}`
+
+  return NAMED_RGB[parsed as LiveVoiceNamedColor] ?? '#808080'
+}
 
 export const DEFAULT_COLORS: LiveVoiceColors = { user: 'green', agent: 'cyan', dot: 'red', idle: 'gray' }
 
@@ -22,18 +101,18 @@ export const SILENCES: readonly number[] = [1000, 1500, 2000, 2500, 3000]
 
 export const CONFIG_USAGE =
   `Usage: /live config [reset | test | voice <name> | animation <${ANIMATIONS.join('|')}> | silence <${SILENCES.join('|')}>` +
-  ` | <${COLOR_TARGETS.join('|')}> <${COLORS.join('|')}>]`
+  ` | <${COLOR_TARGETS.join('|')}> <color>]; a color is a theme color (${THEME_COLORS.join('|')}),` +
+  ` a named color (${COLORS.join('|')}) or #rrggbb`
 
 const isTarget = (value: string): value is ColorTarget => (COLOR_TARGETS as readonly string[]).includes(value)
-const isColor = (value: unknown): value is LiveVoiceColor => typeof value === 'string' && (COLORS as readonly string[]).includes(value)
 
 /** Colors read back from the store: each valid one kept, anything else its default. */
 export function liveColors(value: unknown): LiveVoiceColors {
   const stored = typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
   const colors = { ...DEFAULT_COLORS }
   for (const target of COLOR_TARGETS) {
-    const color = stored[target]
-    if (isColor(color)) colors[target] = color
+    const color = parseColor(stored[target])
+    if (color !== undefined) colors[target] = color
   }
 
   return colors
@@ -180,10 +259,11 @@ const VOICE_NAME = /^[a-z]{1,3}_[a-z0-9]+$/i
 
 function parseConfig(rest: string[]): LiveCommand {
   const [first = '', second = '', ...extra] = rest.map(word => word.toLowerCase())
+  const color = parseColor(rest[1])
   if (rest.length === 0) return { kind: 'config' }
   if (first === 'reset' && rest.length === 1) return { kind: 'config-reset' }
   if (first === 'test' && rest.length === 1) return { kind: 'config-test' }
-  if (isTarget(first) && isColor(second) && extra.length === 0) return { kind: 'config-set', target: first, color: second }
+  if (isTarget(first) && color !== undefined && extra.length === 0) return { kind: 'config-set', target: first, color }
   if (first === 'voice' && isVoice(second) && extra.length === 0) return { kind: 'config-voice', voice: second }
   if (first === 'animation' && isAnimation(second) && extra.length === 0) return { kind: 'config-animation', animation: second }
   const silenceMs = /^\d+$/.test(second) ? Number(second) : NaN

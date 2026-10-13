@@ -74,6 +74,11 @@ Mark each step pass or fail and note what you heard or saw on a failure.
   brings back every default; `Esc` or `Close` closes it. After restarting Claude Code the choices are
   still there. `/live config user pink` answers the usage. On a narrow terminal, if no dialog shows,
   the answer still lists every setting and the commands.
+- [ ] `/live config user claude` and `/live config agent #ff8800`: the listening wave takes the theme's Claude
+  color (switch the theme in `/config`: it follows), the speaking wave is orange. In the dialog, `Edit color`
+  `Claude speaking`, then `w` a few times: the red bar grows by 16 a press and the band's speaking wave changes
+  at once; `1` then `a`: the green value drops by 1. A `Theme` swatch press sets that theme color.
+  `/live config user #12` answers the usage.
 
 ## 7. Two sessions (process scoping)
 
