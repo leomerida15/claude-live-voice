@@ -59,9 +59,9 @@ While live mode is on, a band of two rows sits above the prompt.
 The **audio bar** reads `●🎙  m: 🔇 Mute  s: ⏹ Stop  │ ▁▁▃▅█▇▃▁…`: a red dot that
 blinks while the microphone is live (a steady red `🔇` while muted), the Mute and
 Stop controls, then a wave across the rest of the band. While listening the wave
-moves like sound, in green, its height following the microphone level (a low
-ripple in silence, tall while you talk), so you can see the mic hears you; while Claude speaks it is a moving cyan wave; otherwise it is a
-flat dim gray line. The colors and the animation can be changed (see Live settings).
+is a still green line until your voice is heard, then the same moving wave
+Claude speaks with, in green, so you can see the mic hears you; while Claude
+speaks it is that wave in cyan; otherwise it is a flat dim gray line. The colors and the animation can be changed (see Live settings).
 
 The **text bar** below reads `<state> · <voice>`, plus `N queued` while
 sentences wait to be spoken, with the suggested chords on the right
@@ -115,7 +115,7 @@ with every current setting and the commands that change them.
 
 | Color | Colors | Default |
 | --- | --- | --- |
-| `user` | The wave while you speak (it follows the microphone level). | `green` |
+| `user` | The line while listening, and the wave while you speak. | `green` |
 | `agent` | The wave while Claude speaks. | `cyan` |
 | `dot` | The blinking live dot and the muted mic. | `red` |
 | `idle` | The flat line while muted, transcribing or thinking. | `gray` |

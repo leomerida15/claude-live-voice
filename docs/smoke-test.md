@@ -28,9 +28,9 @@ Mark each step pass or fail and note what you heard or saw on a failure.
 
 - [ ] Say a short question, for example "¿Qué hora es en Madrid?".
 - [ ] The band goes `transcribing` -> `thinking` -> `speaking`, then back to `listening`.
-- [ ] While `listening`, the audio bar's wave is green and keeps moving: a low ripple in silence that
-  jumps tall as you talk and settles back when you stop (no scrolling history); while `speaking` it is a moving cyan wave that stops when the reply ends; otherwise a flat dim
-  line. The wave fills the band's width without wrapping, and the controls stay before it.
+- [ ] While `listening` and silent, the audio bar shows a still flat green line; as you talk it becomes
+  the same moving wave as the speaking one, in green, and goes flat again shortly after you stop; while
+  `speaking` it is that wave in cyan, stopping when the reply ends; otherwise a flat dim line. The wave fills the band's width without wrapping, and the controls stay before it.
 - [ ] The prompt shown in the transcript is what you said.
 - [ ] The reply is spoken sentence by sentence, starting before Claude finishes writing.
 - [ ] The text bar shows `N queued` while sentences wait.

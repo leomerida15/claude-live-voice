@@ -2,6 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import type { Engine } from 'claude-code/testing'
 
+import { waveRow } from '../hooks/text.ts'
 import { fakeWorld, settle } from './fake.ts'
 import type { World } from './fake.ts'
 
@@ -43,11 +44,10 @@ const micOf = async (ui: Ui) => await ui.find({ type: 'Text' })
 // (10), the `│` (1), a gap after each of the four (4) and the margin (2).
 // Muted, `🔇` (2) and `m: 🎙 Unmute` (12) take one cell more.
 const WIDE = BAND.props.bodyColumns - 30
-// The listening wave at rest: a low ripple across the whole width.
-const RIPPLE = new RegExp(`^[▁▂]{${WIDE}}$`)
-// A row's mean block height, 0 (▁) to 7 (█).
-const height = (row: string | undefined) =>
-  [...(row ?? '')].reduce((sum, glyph) => sum + '▁▂▃▄▅▆▇█'.indexOf(glyph), 0) / Math.max(1, [...(row ?? '')].length)
+// Listening and nothing heard: a still flat line across the whole width.
+const FLAT = new RegExp(`^▁{${WIDE}}$`)
+// Every frame of the speaking wave at the band's width.
+const WAVES = Array.from({ length: 8 }, (_, frame) => waveRow(frame, WIDE))
 const HINT = 'alt+space mute · alt+s stop'
 
 // Hears one utterance and runs the live turn it starts, its reply held playing.
@@ -63,47 +63,53 @@ async function liveTurn($: Engine, world: World) {
   await settle(world, 50)
 }
 
-test('the band bounces a wave with the microphone level while listening and a wave while speaking', SLOW, async ($, on) => {
+test('the band draws the speaking wave while the person talks, a flat line while silent, in their colors', SLOW, async ($, on) => {
   const world = fakeWorld(on)
   world.reply.text = 'Hola.'
   await $.session.start(START)
   await $.command.run(live('on'))
   await settle(world)
   const ui = await $.ui.mount({ plugin: 'live-voice', surface: 'terminal', ...BAND })
-  // Silence: a low ripple that still moves.
-  const still = await meterOf(ui)
-  expect(still).toMatch(RIPPLE)
-  await settle(world, 260)
-  expect(await meterOf(ui)).toMatch(RIPPLE)
-  expect(await meterOf(ui)).not.toBe(still)
-  // Speech: the same wave, taller, in the person's color (green).
+  // Listening, nothing heard: a still flat line in the person's color (green).
+  expect(await meterOf(ui)).toMatch(FLAT)
+  expect((await waveOf(ui))?.props.color).toBe('green')
+  // Silent listening does not redraw every tick: only the dot's blinks (about 4 in 2 s).
+  const quiet = world.stateWrites()
+  await settle(world, 2_000)
+  expect(world.stateWrites() - quiet).toBeLessThanOrEqual(5)
+  expect(await meterOf(ui)).toMatch(FLAT)
+  // The person talks: exactly the speaking wave, moving, in green.
   world.levels(0.9, 1, 1)
   await settle(world)
   const loud = await meterOf(ui)
-  expect(loud).toHaveLength(WIDE)
-  expect(height(loud)).toBeGreaterThan(height(still) + 2)
+  expect(WAVES).toContain(loud)
   expect((await waveOf(ui))?.props.color).toBe('green')
-  // Not a history: once the voice stops, the whole line falls back to the ripple.
+  await settle(world, 260)
+  const later = await meterOf(ui)
+  expect(WAVES).toContain(later)
+  expect(later).not.toBe(loud)
+  // Once the voice stops, the line falls back to flat.
   world.levels(...Array.from({ length: 30 }, () => 0))
   await settle(world)
-  expect(await meterOf(ui)).toMatch(RIPPLE)
+  expect(await meterOf(ui)).toMatch(FLAT)
 
   await liveTurn($, world)
   expect(await ui.find({ type: 'Text', text: 'speaking' })).toBeDefined()
   const first = await meterOf(ui)
-  expect(first).toHaveLength(WIDE)
-  // The agent's voice is cyan.
+  expect(WAVES).toContain(first)
+  // The agent's voice is the same wave in cyan.
   expect((await waveOf(ui))?.props.color).toBe('cyan')
   await settle(world, 160)
   const second = await meterOf(ui)
-  expect(second).toHaveLength(WIDE)
+  expect(WAVES).toContain(second)
   expect(second).not.toBe(first)
 
   world.playback.release()
   await settle(world)
   expect(await ui.find({ type: 'Text', text: 'listening' })).toBeDefined()
-  expect(await meterOf(ui)).toMatch(RIPPLE)
-  // Listening, the wave moves on the band's one timer: at most 8 redraws a second.
+  expect(await meterOf(ui)).toMatch(FLAT)
+  // Talking, the wave moves on the band's one timer: at most 8 redraws a second.
+  world.levels(...Array.from({ length: 40 }, () => 1))
   const writes = world.stateWrites()
   await settle(world, 2_000)
   expect(world.stateWrites() - writes).toBeGreaterThan(4)
@@ -144,7 +150,7 @@ test('the audio bar holds the blinking mic, then the plain controls, then a wave
   // The band, then its audio bar (dot and mic, Mute, Stop, the bar, the wave), then the text bar.
   expect(bars[1]?.text).toMatch(/^(●| )🎙🔇 Mute⏹ Stop│[▁▂]+$/u)
   expect(bars[2]?.text).toBe(`listening · ef_dora${HINT}`)
-  expect(await meterOf(ui)).toMatch(RIPPLE)
+  expect(await meterOf(ui)).toMatch(FLAT)
 
   // The dot blinks while on, in the dot color: lit and dark across a blink.
   expect((await micOf(ui))?.props.color).toBe('red')
@@ -204,7 +210,7 @@ test('levels heard while not listening do not reach the next meter', SLOW, async
   await $.command.run(live('mute'))
   await settle(world)
   expect(await ui.find({ type: 'Text', text: 'listening' })).toBeDefined()
-  expect(await meterOf(ui)).toMatch(RIPPLE)
+  expect(await meterOf(ui)).toMatch(FLAT)
   await ui.unmount()
   await $.command.run(live('off'))
 })

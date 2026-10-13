@@ -360,33 +360,25 @@ export function smoothLevel(shown: number, level: number): number {
   return from + (to - from) * (to > from ? ATTACK : DECAY)
 }
 
-// The ripple's height at silence, as a share of the full wave.
-const RIPPLE = 0.12
+/** The smoothed mic level (0..1) at which the listening wave takes the person's voice as heard. */
+export const SPEECH_GATE = 0.15
 
 /**
- * Frame `frame` of the listening wave, exactly `width` cells: the whole line
- * moves a step each frame, two sines beating so it looks like sound, its
- * height scaled by the mic level (0..1): a low ripple at silence, a tall
- * bouncing wave when loud.
+ * Whether a smoothed mic level is a voice: at or over `SPEECH_GATE`, judged on
+ * the level rounded to hundredths as the band's state publishes it, so the
+ * timer and the band always agree.
  */
-export function bounceRow(frame: number, level: number, width: number): string {
-  const size = cells(width)
-  const amplitude = RIPPLE + (1 - RIPPLE) * unit(level)
-  const step = Math.trunc(Number.isFinite(frame) ? frame : 0)
-  let row = ''
-  for (let cell = 0; cell < size; cell += 1) {
-    const fast = Math.sin((cell + step) * 0.9)
-    const slow = Math.sin((cell - step * 0.6) * 0.37 + 1)
-    row += levelGlyph(amplitude * (0.5 + 0.3 * fast + 0.2 * slow))
-  }
-
-  return row
+export function isVoiced(level: number): boolean {
+  return Math.round(unit(level) * 100) / 100 >= SPEECH_GATE
 }
+
+// The bars' height at silence, as a share of their full height.
+const RIPPLE = 0.12
 
 /**
  * Frame `frame` of the listening bars, exactly `width` cells: a bar every
  * other cell, each jumping to its own height each frame, all scaled by the
- * mic level (0..1) as `bounceRow` is.
+ * mic level (0..1): a low ripple at silence, tall bars when loud.
  */
 export function barsRow(frame: number, level: number, width: number): string {
   const size = cells(width)

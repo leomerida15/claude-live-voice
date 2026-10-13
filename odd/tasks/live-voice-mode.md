@@ -89,6 +89,10 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
   shortcuts `voice|<target>|animation|silence|reset`; `/live` hint mentions config.
 - [x] T18 Surface speak.sh failures: its stderr's first line in the toast; specific speak.sh errors
   (HTTP status and body, mktemp, paplay); reproduce the ~35 ms exit-1 failures and fix a deterministic cause.
+- [x] T19 Listening animation identical to the speaking one (user request after a live test): with
+  animation `wave`, while listening and the smoothed mic level is at or above `SPEECH_GATE` (0.15) the band
+  draws exactly `waveRow(frame, width)` in the `user` color; below it, a still `flatRow` in the `user` color
+  (no redraw every tick). Speaking stays `waveRow` in `agent`; `bars` and `off` unchanged. `bounceRow` removed.
 
 ## Acceptance criteria
 - `claude plugin validate .` passes; type-check passes; `claude plugin test .` passes.
@@ -106,6 +110,7 @@ ask-on-risk. Forecast ~600 authored lines.
   T14: delegated direct (writer trigger: register.tsx, text.ts, types, tests).
   T15–T18: delegated direct (one bounded writer; writer trigger: listen.py, speak.sh, register.tsx,
   text.ts, types, tests, docs).
+  T19: delegated direct (writer trigger: register.tsx, text.ts, tests, docs).
 
 ## Out of scope (hardening)
 Barge-in, global keybindings, cloud providers.
@@ -345,3 +350,11 @@ Barge-in, global keybindings, cloud providers.
 The human runs `docs/smoke-test.md` with the microphone and reports failed steps. Not verified yet:
 the real voice loop, a real hot reload, two concurrent sessions. Known gap: children started before a
 `/clear` keep the old session tag, so a later reload misses them.
+
+- T19 done (route: delegated direct). Commit: see the T19 commit (`feat: draw the speaking wave while the
+  person talks`). RED: `claude plugin test .` -> 4 fail (silent listening drew a moving ripple, not `^▁{70}$`, in
+  three band tests; `SPEECH_GATE` not exported). GREEN: 74 pass, 0 fail (band test asserts: silent -> flat green,
+  <= 5 state writes in 2 s; loud -> row is one of `waveRow(0..7, 70)`, green, moving; levels to 0 -> flat;
+  speaking -> `waveRow` cyan; talking -> 5..17 writes in 2 s). `claude plugin validate .` passed (1 expected
+  CLAUDE.md warning); `python3 -I -m unittest discover -s test -p 'test_*.py'` 23 OK; `bash -n scripts/speak.sh`
+  ok; tsc no output. Not verified: live audio look in a real terminal.

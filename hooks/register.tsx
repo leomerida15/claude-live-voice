@@ -15,10 +15,10 @@ import {
   claim,
   audioBarWaveWidth,
   barsRow,
-  bounceRow,
   cellWidth,
   cleanTranscript,
   flatRow,
+  isVoiced,
   killPattern,
   liveColors,
   liveSettings,
@@ -87,6 +87,8 @@ const live = {
   ticks: 0,
   waveTick: 0,
   dot: true,
+  // Whether the wave moved on the last tick, so its stop is redrawn once.
+  wasMoving: false,
   ticker: undefined as Timer | undefined,
 }
 
@@ -147,22 +149,37 @@ const hearLevels = (levels: number[]) => {
   for (const level of levels) live.level = smoothLevel(live.level, level)
 }
 
-// Moves the wave while listening or speaking and blinks the dot while not
-// muted; redraws only when one of them changed. One timer, started with live
-// voice and stopped with it.
+// Whether the band's wave moves now: while speaking; while listening, the
+// bars always (they follow the level) and the wave only while a voice is heard
+// (silent, it is a still flat line).
+const isWaveMoving = () => {
+  const state = stateNow()
+  if (live.animation === 'off') return false
+  if (state === 'speaking') return true
+  if (state !== 'listening') return false
+
+  return live.animation === 'bars' || isVoiced(live.level)
+}
+
+// Moves the wave while it is moving (see isWaveMoving) and blinks the dot
+// while not muted; redraws only when one of them changed, or when a heard
+// voice falls silent (one last redraw, back to the flat line). One timer,
+// started with live voice and stopped with it.
 const startTicker = ($: $) => {
   stopTicker()
   live.ticks = 0
   live.dot = true
+  live.wasMoving = false
   live.ticker = $.clock.every(TICK_MS, () => {
     live.ticks += 1
     const dot = Math.floor(live.ticks / BLINK_TICKS) % 2 === 0
     const hasBlinked = dot !== live.dot
     live.dot = dot
-    const state = stateNow()
-    const isMoving = live.animation !== 'off' && (state === 'listening' || state === 'speaking')
+    const isMoving = isWaveMoving()
+    const hasStopped = live.wasMoving && !isMoving
+    live.wasMoving = isMoving
     if (isMoving) live.waveTick += 1
-    if (isMoving || (hasBlinked && !live.isMuted)) void publish($).catch(() => undefined)
+    if (isMoving || hasStopped || (hasBlinked && !live.isMuted)) void publish($).catch(() => undefined)
   })
 }
 
@@ -683,14 +700,15 @@ export const register: Register = (on, options) => {
     const stopLabel = '⏹ Stop'
     const width = audioBarWaveWidth(columns, [mic, `m: ${muteLabel}`, `s: ${stopLabel}`, BAR])
     // Who is talking: the person, Claude, or nobody (dim); with no animation, a still dim line.
+    // The person's voice draws the same wave as Claude's; listening in silence, a still flat line.
     const isIdle = animation === 'off' || (now.state !== 'listening' && now.state !== 'speaking')
     const frame = now.wave ?? 0
     const wave = isIdle
       ? flatRow(width)
       : animation === 'bars'
         ? barsRow(frame, now.state === 'listening' ? level : 0.8, width)
-        : now.state === 'listening'
-          ? bounceRow(frame, level, width)
+        : now.state === 'listening' && !isVoiced(level)
+          ? flatRow(width)
           : waveRow(frame, width)
     const waveColor = isIdle ? palette.idle : now.state === 'listening' ? palette.user : palette.agent
     const queued = now.queue > 0 ? ` · ${now.queue} queued` : ''
