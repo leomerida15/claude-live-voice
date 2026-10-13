@@ -74,8 +74,11 @@ class PauseFlag:
 
 
 class Detector:
-    def __init__(self, on_utterance):
+    def __init__(self, on_utterance, end_silence_ms=END_SILENCE_MS, start_frames=START_FRAMES, start_ratio=START_RATIO):
         self.on_utterance = on_utterance
+        self.end_silence_ms = end_silence_ms
+        self.start_frames = start_frames
+        self.start_ratio = start_ratio
         self.floor = None
         self.calibration = []
         self.pre_roll = collections.deque(maxlen=frames_for(PRE_ROLL_MS))
@@ -90,7 +93,7 @@ class Detector:
         self.pre_roll.clear()
 
     def threshold(self):
-        return max((self.floor or 0.0) * START_RATIO, MIN_START_RMS)
+        return max((self.floor or 0.0) * self.start_ratio, MIN_START_RMS)
 
     def feed(self, frame):
         level = rms(frame)
@@ -105,7 +108,7 @@ class Detector:
             self.pre_roll.append(frame)
             if level > start:
                 self.loud_run += 1
-                if self.loud_run >= START_FRAMES:
+                if self.loud_run >= self.start_frames:
                     self.speaking = True
                     self.frames = list(self.pre_roll)
                     self.speech_frames = self.loud_run
@@ -121,7 +124,7 @@ class Detector:
             self.silent_run = 0
         else:
             self.silent_run += 1
-        if self.silent_run >= frames_for(END_SILENCE_MS) or len(self.frames) >= frames_for(MAX_UTTERANCE_MS):
+        if self.silent_run >= frames_for(self.end_silence_ms) or len(self.frames) >= frames_for(MAX_UTTERANCE_MS):
             self.finish()
 
     def finish(self):
@@ -159,12 +162,37 @@ def default_dir():
     return os.path.join(base, "live-voice")
 
 
+def positive(kind):
+    def parse(text):
+        try:
+            value = kind(text)
+        except ValueError:
+            raise argparse.ArgumentTypeError("not a number: %r" % text)
+        if not math.isfinite(value) or value <= 0:
+            raise argparse.ArgumentTypeError("must be greater than 0: %r" % text)
+        return value
+
+    return parse
+
+
 def parse_args(argv):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dir", default=default_dir(), help="where utterance WAV files are written")
     parser.add_argument("--pause-file", default=None, help='file whose content "1" pauses listening')
     parser.add_argument("--stdin", action="store_true", help="read raw PCM from stdin instead of arecord")
     parser.add_argument("--device", default=None, help="arecord capture device (-D)")
+    parser.add_argument(
+        "--end-silence-ms", type=positive(int), default=END_SILENCE_MS, help="silence that ends an utterance"
+    )
+    parser.add_argument(
+        "--start-frames", type=positive(int), default=START_FRAMES, help="loud %d ms frames that start one" % FRAME_MS
+    )
+    parser.add_argument(
+        "--threshold-factor",
+        type=positive(float),
+        default=START_RATIO,
+        help="how far over the calibrated noise floor speech must be",
+    )
     parser.add_argument("--tag", default=None, help="session tag; ignored, it lets the caller find this process")
     return parser.parse_args(argv)
 
@@ -184,7 +212,12 @@ def main(argv=None):
         recorder = subprocess.Popen(command, stdout=subprocess.PIPE)
         source = recorder.stdout
 
-    detector = Detector(writer(args.dir))
+    detector = Detector(
+        writer(args.dir),
+        end_silence_ms=args.end_silence_ms,
+        start_frames=args.start_frames,
+        start_ratio=args.threshold_factor,
+    )
     pause = PauseFlag(args.pause_file)
     try:
         while True:

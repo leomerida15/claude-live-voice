@@ -72,6 +72,15 @@ Set these in `/config` or in `pluginConfigs["live-voice"].options` in
 | `language` | `es` |
 | `whisperUrl` | `http://127.0.0.1:2022/v1/audio/transcriptions` |
 | `kokoroUrl` | `http://127.0.0.1:8880/v1/audio/speech` |
+| `echoTailMs` | `350`: pause after a reply is spoken before listening again |
+| `vadEndSilenceMs` | `800`: silence that ends an utterance |
+| `vadStartFrames` | `3`: loud 30 ms frames in a row that start an utterance |
+| `vadThresholdFactor` | `3`: how many times louder than the room's noise speech must be |
+
+The last four tune the echo guard and the voice detector. If the reply's echo
+is taken for speech, raise `echoTailMs` or `vadThresholdFactor`; if your
+sentences are cut in two, raise `vadEndSilenceMs`. A value that is not a
+positive number falls back to its default.
 
 ## Limitations
 

@@ -85,3 +85,23 @@ test('a reload while muted resumes muted', SLOW, async ($, on) => {
   expect(world.files.get(`${RUNTIME_DIR}/live-voice/${SESSION_ID}/paused`)).toBe('1')
   await $.command.run(live('off'))
 })
+
+test('the listener gets the VAD tunables from the settings', { ...SLOW, options: { vadEndSilenceMs: 500, vadStartFrames: 5, vadThresholdFactor: 4.5 } }, async ($, on) => {
+  const world = fakeWorld(on)
+  await $.session.start(START)
+  await $.command.run(live('on'))
+  await settle(world)
+  const argv = listeners(world)[0]?.argv ?? []
+  expect(argv).toEqual(expect.arrayContaining(['--end-silence-ms', '500', '--start-frames', '5', '--threshold-factor', '4.5']))
+  await $.command.run(live('off'))
+})
+
+test('the listener gets the default VAD tunables when none are set', SLOW, async ($, on) => {
+  const world = fakeWorld(on)
+  await $.session.start(START)
+  await $.command.run(live('on'))
+  await settle(world)
+  const argv = listeners(world)[0]?.argv ?? []
+  expect(argv).toEqual(expect.arrayContaining(['--end-silence-ms', '800', '--start-frames', '3', '--threshold-factor', '3']))
+  await $.command.run(live('off'))
+})

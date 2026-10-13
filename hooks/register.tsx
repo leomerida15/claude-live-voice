@@ -2,7 +2,17 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, HookStream, ProcessSpawnChunk, ProcessSpawnResult, Register } from 'claude-code'
 
 import type { LiveVoiceState, LiveVoiceStatus } from '../types'
-import { SentenceChunker, USAGE, claim, cleanTranscript, killPattern, parseLiveCommand, safeSessionId, sessionTag } from './text.ts'
+import {
+  SentenceChunker,
+  USAGE,
+  claim,
+  cleanTranscript,
+  killPattern,
+  parseLiveCommand,
+  safeSessionId,
+  sessionTag,
+  tunable,
+} from './text.ts'
 import type { SubmittedPrompt } from './text.ts'
 
 type $ = EngineInterface
@@ -11,9 +21,6 @@ type Child = HookStream<ProcessSpawnChunk, ProcessSpawnResult>
 const OFF: LiveVoiceStatus = { isOn: false, state: 'off', queue: 0, voice: '' }
 const status = atom({ plugin: 'live-voice', key: 'status' } as const, OFF)
 
-// Pause after playback before listening again, so the room's echo of the
-// last sentence is not taken for speech.
-const ECHO_TAIL_MS = 350
 const STT_TIMEOUT_MS = 60_000
 
 // Runtime state of the loop. Children die with the module on a reload, so
@@ -38,6 +45,14 @@ const config = {
   language: 'es',
   whisperUrl: 'http://127.0.0.1:2022/v1/audio/transcriptions',
   kokoroUrl: 'http://127.0.0.1:8880/v1/audio/speech',
+  // Pause after playback before listening again, so the room's echo of the
+  // last sentence is not taken for speech.
+  echoTailMs: 350,
+  // listen.py's VAD: silence that ends an utterance, loud frames that start
+  // one, and how far over the noise floor speech must be.
+  vadEndSilenceMs: 800,
+  vadStartFrames: 3,
+  vadThresholdFactor: 3,
   scripts: '',
   // This session's tag, in every child's argv so a kill can find only them.
   tag: '',
@@ -178,7 +193,7 @@ const speakNext = async ($: $) => {
     }
     live.player = undefined
   }
-  await $.clock.sleep(ECHO_TAIL_MS).catch(() => undefined)
+  await $.clock.sleep(config.echoTailMs).catch(() => undefined)
   live.isSpeaking = false
   if (live.isOn) await writePause($)
   await publish($)
@@ -215,6 +230,9 @@ const start = async ($: $) => {
     argv: [
       'python3', '-I', `${config.scripts}/listen.py`,
       '--dir', config.dir, '--pause-file', config.pauseFile, '--tag', config.tag,
+      '--end-silence-ms', String(config.vadEndSilenceMs),
+      '--start-frames', String(config.vadStartFrames),
+      '--threshold-factor', String(config.vadThresholdFactor),
     ],
   })
   live.listener = child
@@ -277,6 +295,10 @@ export const register: Register = (on, options) => {
   config.language = String(options.language ?? config.language)
   config.whisperUrl = String(options.whisperUrl ?? config.whisperUrl)
   config.kokoroUrl = String(options.kokoroUrl ?? config.kokoroUrl)
+  config.echoTailMs = tunable(options.echoTailMs, config.echoTailMs)
+  config.vadEndSilenceMs = Math.max(1, Math.round(tunable(options.vadEndSilenceMs, config.vadEndSilenceMs)))
+  config.vadStartFrames = Math.max(1, Math.round(tunable(options.vadStartFrames, config.vadStartFrames)))
+  config.vadThresholdFactor = tunable(options.vadThresholdFactor, config.vadThresholdFactor)
 
   on('session.start', async ($, e, next) => {
     const root = $.plugin.root

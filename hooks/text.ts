@@ -57,6 +57,13 @@ export function claim<P extends SubmittedPrompt>(prompts: readonly P[], turnText
   return prompts.find(prompt => holds(prompt.entered) || holds(prompt.sent)) ?? prompts.find(prompt => prompt.isEntering)
 }
 
+/** A numeric setting as a positive number: anything else (NaN, 0, negative, text) is the fallback. */
+export function tunable(value: unknown, fallback: number): number {
+  const number = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN
+
+  return Number.isFinite(number) && number > 0 ? number : fallback
+}
+
 /** A session id safe in a path and in a regex: anything odd becomes `-`. */
 export function safeSessionId(sessionId: string): string {
   return sessionId.replace(/[^A-Za-z0-9_-]/g, '-')

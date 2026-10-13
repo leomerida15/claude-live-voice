@@ -9,6 +9,7 @@ import {
   parseLiveCommand,
   sessionTag,
   stripMarkdown,
+  tunable,
 } from '../hooks/text.ts'
 
 const speakAll = (pieces: string[]) => {
@@ -148,5 +149,19 @@ describe('sessionTag and killPattern', () => {
     expect(pattern.test('python3 -I /p/scripts/listen.py --dir /d')).toBe(false)
     expect(pattern.test('bash /p/scripts/speak.sh --tag live-voice-abc ef_dora')).toBe(false)
     expect(new RegExp(killPattern('speak.sh', 'live-voice-abc')).test('bash /p/scripts/speak.sh --tag live-voice-abc ef_dora')).toBe(true)
+  })
+})
+
+describe('tunable', () => {
+  test('a positive number stands', () => {
+    expect(tunable(500, 800)).toBe(500)
+    expect(tunable(4.5, 3)).toBe(4.5)
+    expect(tunable('250', 800)).toBe(250)
+  })
+
+  test('anything else falls back to the default', () => {
+    for (const bad of [Number.NaN, 0, -3, Number.POSITIVE_INFINITY, '', 'loud', undefined, true]) {
+      expect(tunable(bad, 800)).toBe(800)
+    }
   })
 })

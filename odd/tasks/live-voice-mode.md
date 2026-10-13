@@ -46,7 +46,7 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
   and pause flag; stop/silence kill only this session's children (no global `pkill -f <script>`). Test-first.
 - [x] T8 Hot-reload recovery: on `session.start`, kill this session's orphaned children; if `$.state` says
   live was on, resume the listener (product decision: resume, not switch off). Test-first.
-- [ ] T9 Echo-guard tunables: `userConfig` options for the post-playback tail and the VAD thresholds,
+- [x] T9 Echo-guard tunables: `userConfig` options for the post-playback tail and the VAD thresholds,
   passed to `listen.py` as flags; defaults unchanged. Test-first (python + engine tests).
 - [ ] T10 Interactive smoke-test checklist for the human (`docs/smoke-test.md`), linked from the README.
 
@@ -131,7 +131,18 @@ Barge-in, global keybindings, cloud providers.
   `claude plugin test .` -> 1 fail (no scoped pkill and no second listener after the second `session.start`);
   GREEN: 33 pass / 0 fail (resume, start while off spawns nothing, resume muted). `claude plugin validate .` passed
   (pre-existing CLAUDE.md warning); tsc no errors; python 8 OK; `bash -n` ok.
-  Not verified: a real hot reload in an interactive session (needs a person).
+  Not verified: a real hot reload in an interactive session (needs a person). Commit 5975774.
+
+- T9 done (route: delegated direct). `userConfig` numbers `echoTailMs` (350), `vadEndSilenceMs` (800),
+  `vadStartFrames` (3), `vadThresholdFactor` (3, listen.py's `START_RATIO` over the calibrated noise floor);
+  `tunable()` falls back to the default on NaN, <= 0, infinity or non-numbers, frame and ms values rounded and at
+  least 1. `listen.py` takes `--end-silence-ms`, `--start-frames`, `--threshold-factor` (same defaults, argparse
+  refuses non-positive or non-finite values with exit 2); register passes them. README Settings table documents
+  them. RED: python -> 3 errors (unrecognized flags); engine -> 3 fail (no tunables in the listener argv, and the
+  status was already `listening` 400 ms after playback with `echoTailMs` 1000). GREEN: python 12 OK (shorter end
+  silence splits two utterances the default joins, 20 start frames ignore a 0.4 s burst, factor 8 ignores a quiet
+  voice over a 200 rms floor, bad values refused); engine 38 pass / 0 fail (incl. `tunable` unit tests).
+  `claude plugin validate .` passed (pre-existing CLAUDE.md warning); tsc no errors; `bash -n` ok.
 
 ## Next step
 Manual acceptance in an interactive session: `claude --plugin-dir <repo>`, `/live`, speak a question.

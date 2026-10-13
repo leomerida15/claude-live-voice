@@ -79,3 +79,20 @@ test('queued live prompts merged into one turn still make it a live turn', SLOW,
   expect(spoken(world)).toEqual(['Dos cosas.'])
   await $.command.run(live('off'))
 })
+
+test('the pause after playback follows the echoTailMs setting', { ...SLOW, options: { echoTailMs: 1000 } }, async ($, on) => {
+  const world = fakeWorld(on, 'hola')
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+  await $.command.run(live('on'))
+  await settle(world)
+  world.hear('/run/user/1000/live-voice/utt-1.wav')
+  await settle(world)
+
+  // turn() lets 400 ms pass after the reply: still inside the 1000 ms tail.
+  await turn($, world, 't1', 'hola', 'Hola.')
+  expect(spoken(world)).toEqual(['Hola.'])
+  expect((await $.command.run(live('status'))).text).toMatch(/: speaking/)
+  await settle(world, 700)
+  expect((await $.command.run(live('status'))).text).toMatch(/: listening/)
+  await $.command.run(live('off'))
+})

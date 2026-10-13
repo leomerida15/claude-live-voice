@@ -80,6 +80,36 @@ class ListenTest(unittest.TestCase):
         self.assertEqual(len(paths), 1)
 
 
+class TunablesTest(unittest.TestCase):
+    run_listener = ListenTest.run_listener
+
+    def test_shorter_end_silence_splits_what_the_default_joins(self):
+        audio = pcm(silence(1.0), tone(0.6), silence(0.5), tone(0.6), silence(1.5))
+        joined, _ = self.run_listener(audio)
+        split, _ = self.run_listener(audio, extra=("--end-silence-ms", "300"))
+        self.assertEqual((len(joined), len(split)), (1, 2))
+
+    def test_more_start_frames_ignore_a_short_burst(self):
+        audio = pcm(silence(1.0), tone(0.4), silence(1.5))
+        default, _ = self.run_listener(audio)
+        strict, _ = self.run_listener(audio, extra=("--start-frames", "20"))
+        self.assertEqual((len(default), len(strict)), (1, 0))
+
+    def test_a_higher_threshold_factor_ignores_a_quiet_voice(self):
+        audio = pcm(silence(1.0, noise=200), tone(1.0, amplitude=1500), silence(1.5, noise=200))
+        default, _ = self.run_listener(audio)
+        strict, _ = self.run_listener(audio, extra=("--threshold-factor", "8"))
+        self.assertEqual((len(default), len(strict)), (1, 0))
+
+    def test_bad_values_are_refused(self):
+        for flag, value in (("--end-silence-ms", "0"), ("--start-frames", "-1"), ("--threshold-factor", "nan")):
+            with self.subTest(flag=flag):
+                done = subprocess.run(
+                    [sys.executable, "-I", str(SCRIPT), "--stdin", flag, value], input=b"", capture_output=True, timeout=30
+                )
+                self.assertEqual(done.returncode, 2)
+
+
 class SpeakTest(unittest.TestCase):
     SPEAK = SCRIPT.parent / "speak.sh"
 

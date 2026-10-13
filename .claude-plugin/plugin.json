@@ -30,6 +30,30 @@
       "title": "Kokoro URL",
       "description": "OpenAI-compatible speech endpoint.",
       "default": "http://127.0.0.1:8880/v1/audio/speech"
+    },
+    "echoTailMs": {
+      "type": "number",
+      "title": "Echo tail (ms)",
+      "description": "Pause after the reply is spoken before listening again, so the room's echo is not taken for speech.",
+      "default": 350
+    },
+    "vadEndSilenceMs": {
+      "type": "number",
+      "title": "End of speech silence (ms)",
+      "description": "Silence that ends an utterance.",
+      "default": 800
+    },
+    "vadStartFrames": {
+      "type": "number",
+      "title": "Speech start frames",
+      "description": "Consecutive loud 30 ms frames that start an utterance.",
+      "default": 3
+    },
+    "vadThresholdFactor": {
+      "type": "number",
+      "title": "Speech threshold factor",
+      "description": "How many times louder than the calibrated noise floor speech must be.",
+      "default": 3
     }
   }
 }
