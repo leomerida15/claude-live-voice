@@ -36,7 +36,7 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
 - [x] T1 Scaffold: plugin.json, hooks.json, marketplace.json, README, .gitignore.
 - [x] T2 Audio helpers: `scripts/listen.py` (VAD recorder), `scripts/speak.sh` (Kokoro -> paplay).
 - [x] T3 Mod module `hooks/register.tsx` + state contract `types/index.d.ts`.
-- [ ] T4 Tests (`*.test.ts`) and checks: `claude plugin validate`, `tsc -p`, `claude plugin test`.
+- [x] T4 Tests (`*.test.ts`) and checks: `claude plugin validate`, `tsc -p`, `claude plugin test`.
 
 ## Acceptance criteria
 - `claude plugin validate .` passes; type-check passes; `claude plugin test .` passes.
@@ -69,5 +69,15 @@ ask-on-risk. Forecast ~600 authored lines.
   /tmp/claude-1000/live-voice-tsc: no errors. Validator rule learned: `$` may only be passed to functions declared
   at the top level of the module, so all `$`-taking helpers live at module scope.
 
+- T4 done (route: delegated direct). Commit a26b2a8 adds engine-level tests (`/live status|voice|mute|<bad>`
+  answers, band leaves the engine's drawing while off). Checks observed:
+  `claude plugin validate .` passed; `tsc -p /tmp/claude-1000/live-voice-tsc` no errors;
+  `claude plugin test .` 19 pass / 0 fail; `python3 -I -m py_compile scripts/listen.py` ok;
+  `python3 -I -m unittest discover -s test -p 'test_*.py'` 5 OK; `bash -n scripts/speak.sh` ok.
+  Headless smoke: `claude -p --plugin-dir . "/live status"` -> "Live voice is off. Voice ef_dora.";
+  `"/live on"` -> "Live voice on." and the listener was gone after the session ended (no stray listen.py/arecord).
+- Not verified (no runnable RED, needs a person at the mic): the interactive loop end to end (speak -> prompt ->
+  spoken reply), band rendering and hotkeys in a live terminal, Esc abort stopping playback.
+
 ## Next step
-T4.
+Manual acceptance in an interactive session: `claude --plugin-dir <repo>`, `/live`, speak a question.
