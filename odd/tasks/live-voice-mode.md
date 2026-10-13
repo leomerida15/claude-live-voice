@@ -33,7 +33,7 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
 - English for all code, comments and docs.
 
 ## Tasks
-- [ ] T1 Scaffold: plugin.json, hooks.json, marketplace.json, README, .gitignore.
+- [x] T1 Scaffold: plugin.json, hooks.json, marketplace.json, README, .gitignore.
 - [ ] T2 Audio helpers: `scripts/listen.py` (VAD recorder), `scripts/speak.sh` (Kokoro -> paplay).
 - [ ] T3 Mod module `hooks/register.tsx` + state contract `types/index.d.ts`.
 - [ ] T4 Tests (`*.test.ts`) and checks: `claude plugin validate`, `tsc -p`, `claude plugin test`.
@@ -50,7 +50,8 @@ ask-on-risk. Forecast ~600 authored lines.
 - T1–T4: delegated direct (writer trigger: 2+ non-trivial files).
 
 ## Progress / Evidence
-(pending)
+- T1 done (route: delegated direct). Commit b3c2487. Evidence: `claude plugin validate .` passed with no warnings
+  (marketplace, manifest with userConfig, hooks.json, state contract `live-voice.status`).
 
 ## Next step
-T1.
+T2.
