@@ -80,6 +80,16 @@ interactive smoke test is in `docs/smoke-test.md`.
   `$.state` (check state through `/live status`); a hot reload is simulated with
   a second `session.start`. Shared fakes live in `test/fake.ts`.
 
+## Never change the audio setup
+
+Do not change the user's audio configuration (default sink or source,
+volumes, mutes, modules) while debugging. Read-only queries (`pactl info`,
+`pactl list`, `pactl get-*`) are fine; `pactl set-*`, `wpctl set-*`,
+`pacmd set-*` and `amixer set` are denied in `.claude/settings.json`. If audio
+seems wrong, report what the queries show and let the person fix it. The mod
+itself plays with plain `paplay` and records with plain `arecord`: no device
+is chosen or changed.
+
 ## Conventions
 
 English for code, comments and docs. Conventional Commits, one per ODD task, no

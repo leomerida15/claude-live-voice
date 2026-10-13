@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(pactl set-*)",
+      "Bash(pactl load-module*)",
+      "Bash(pactl unload-module*)",
+      "Bash(pactl move-*)",
+      "Bash(pacmd set-*)",
+      "Bash(pacmd move-*)",
+      "Bash(wpctl set-*)",
+      "Bash(amixer set*)",
+      "Bash(amixer sset*)",
+      "Bash(amixer -c * set*)",
+      "Bash(amixer -c * sset*)"
+    ]
+  }
+}
