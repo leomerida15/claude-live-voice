@@ -1,0 +1,35 @@
+{
+  "name": "live-voice",
+  "version": "0.1.0",
+  "description": "Hands-free live voice conversation with Claude using local Whisper (STT) and Kokoro (TTS).",
+  "author": {
+    "name": "leomerida15"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "voice": {
+      "type": "string",
+      "title": "Voice",
+      "description": "Kokoro voice used for spoken replies.",
+      "default": "ef_dora"
+    },
+    "language": {
+      "type": "string",
+      "title": "Language",
+      "description": "Language code Whisper transcribes (for example es or en).",
+      "default": "es"
+    },
+    "whisperUrl": {
+      "type": "string",
+      "title": "Whisper URL",
+      "description": "OpenAI-compatible transcription endpoint.",
+      "default": "http://127.0.0.1:2022/v1/audio/transcriptions"
+    },
+    "kokoroUrl": {
+      "type": "string",
+      "title": "Kokoro URL",
+      "description": "OpenAI-compatible speech endpoint.",
+      "default": "http://127.0.0.1:8880/v1/audio/speech"
+    }
+  }
+}

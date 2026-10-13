@@ -1,0 +1,14 @@
+{
+  "name": "claude-live-voice",
+  "description": "Live voice mode for Claude Code.",
+  "owner": {
+    "name": "leomerida15"
+  },
+  "plugins": [
+    {
+      "name": "live-voice",
+      "source": "./",
+      "description": "Hands-free live voice conversation with Claude using local Whisper and Kokoro."
+    }
+  ]
+}
