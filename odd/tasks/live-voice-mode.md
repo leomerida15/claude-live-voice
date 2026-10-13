@@ -93,6 +93,8 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
   animation `wave`, while listening and the smoothed mic level is at or above `SPEECH_GATE` (0.15) the band
   draws exactly `waveRow(frame, width)` in the `user` color; below it, a still `flatRow` in the `user` color
   (no redraw every tick). Speaking stays `waveRow` in `agent`; `bars` and `off` unchanged. `bounceRow` removed.
+- [x] T20 `/live-config` command (user request 2026-10-13: `/live:config` is impossible, a command name
+  allows only letters, digits, `_`, `-`): an alias that answers exactly as `/live config <args>`.
 
 ## Acceptance criteria
 - `claude plugin validate .` passes; type-check passes; `claude plugin test .` passes.
@@ -345,6 +347,12 @@ Barge-in, global keybindings, cloud providers.
   `UVICORN_LIMIT_MAX_REQUESTS` (or lowering `RestartSec`) would avoid the pauses. Side effect of the
   reproduction: the live Kokoro restarted twice on its own limit. Commit: see git log
   (`fix: wait for Kokoro to restart and say why speech failed`).
+
+- T20 done (route: inline; one file plus a test and docs). RED: `claude plugin test .` -> 74 pass, 1 fail
+  ("no implementation for command.run" for `live-config`). First try forwarded with `$.command.run` from the
+  hook; the engine refuses it (a command.run hook cannot wait on its own turn), so the `/live` body moved to
+  the top-level `answerLive($, args)` used by both hooks. GREEN: 75 pass, 0 fail. `claude plugin validate .`
+  passed (expected CLAUDE.md warning); tsc no output. Commit: this commit.
 
 ## Next step
 The human runs `docs/smoke-test.md` with the microphone and reports failed steps. Not verified yet:

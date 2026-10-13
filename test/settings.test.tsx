@@ -203,3 +203,16 @@ test('the settings dialog falls back to a built-in voice list when Kokoro does n
   expect(values.length).toBeGreaterThan(3)
   await pane.unmount()
 })
+
+const liveConfig = (args: string) => ({ ...live(args), command: 'live-config' })
+
+test('/live-config opens the same settings dialog and takes the same shortcuts as /live config', SLOW, async ($, on) => {
+  const world = fakeWorld(on)
+  await $.session.start(START)
+  const opened = await $.command.run(liveConfig(''))
+  expect(world.opened).toContain('live-voice-config')
+  expect(opened.text).toMatch(/voice\s+ef_dora/)
+  expect((await $.command.run(liveConfig('voice em_alex'))).text).toBe('Voice set to em_alex.')
+  expect((await $.command.run(liveConfig('silence 2500'))).text).toBe('End-of-speech silence set to 2500 ms.')
+  expect((await $.command.run(liveConfig('dance'))).text).toMatch(/Usage/)
+})

@@ -70,6 +70,9 @@ interactive smoke test is in `docs/smoke-test.md`.
 - A Button's `action` must name an existing engine keybinding action; a mod
   cannot define its own. The band borrows inert ones (`permission:toggleDebug`,
   `footer:dismiss`) that the person binds to chords in `keybindings.json`.
+- A command name allows only letters, digits, `_` and `-` (no `:`). A
+  `command.run` hook cannot call `$.command.run` (it would wait on its own
+  turn): share a top-level function instead (`answerLive`).
 - A hot reload runs `register` and `session.start` again: module variables
   start over, `$.state` stays.
 - A plugin's `$.prompt.submit` runs once the session is idle. Other plugins'

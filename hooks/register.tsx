@@ -532,6 +532,64 @@ const BAR = '│'
 const MIN_WAVE = 4
 const HINT = 'alt+space mute · alt+s stop'
 
+// Answers `/live <args>`; `/live-config <args>` is `/live config <args>`, as a
+// command name cannot hold a colon.
+const answerLive = async ($: $, args: string) => {
+  const command = parseLiveCommand(args)
+  switch (command.kind) {
+    case 'toggle':
+      if (live.isOn) {
+        await stop($)
+        return { text: 'Live voice off.' }
+      }
+      await start($)
+      return { text: `Live voice on. Speak; voice ${live.voice}.` }
+    case 'on':
+      await start($)
+      return { text: `Live voice on. Speak; voice ${live.voice}.` }
+    case 'off':
+      await stop($)
+      return { text: 'Live voice off.' }
+    case 'mute':
+      if (!live.isOn) return { text: 'Live voice is off.' }
+      live.isMuted = !live.isMuted
+      await writePause($)
+      await publish($)
+      return { text: live.isMuted ? 'Microphone muted.' : 'Microphone unmuted.' }
+    case 'status':
+      return { text: describe() }
+    case 'voice':
+    case 'config-voice':
+      await setVoice($, command.voice)
+      return { text: `Voice set to ${command.voice}.` }
+    case 'config': {
+      await loadVoices($)
+      // A dialog: it takes the keys, Esc closes it, toasts wait behind it.
+      const opened = await $.ui
+        .open({ id: CONFIG_PANE, title: 'Live voice settings', focus: true, closeOnEscape: true, holdToasts: true, rows: 12 })
+        .catch(() => undefined)
+      const head = opened?.isPlaced === true
+        ? 'Live voice settings opened (Esc closes).'
+        : 'Could not open the settings dialog here (a wider terminal shows it).'
+      return { text: `${head}\n${await summary($)}` }
+    }
+    case 'config-reset':
+      await resetSettings($)
+      return { text: 'Settings restored to the defaults.' }
+    case 'config-animation':
+      await setAnimation($, command.animation)
+      return { text: `Animation set to ${command.animation}.` }
+    case 'config-silence':
+      await setSilence($, command.silenceMs)
+      return { text: `End-of-speech silence set to ${command.silenceMs} ms.` }
+    case 'config-set':
+      await pickColor($, command.target, command.color)
+      return { text: `${command.target} color set to ${command.color}.` }
+    case 'error':
+      return { text: command.message || USAGE }
+  }
+}
+
 export const register: Register = (on, options) => {
   // From the built-in defaults, not the module's: a hot reload keeps the module's last picks.
   live.voice = String(options.voice ?? SETTINGS.voice)
@@ -572,6 +630,12 @@ export const register: Register = (on, options) => {
       argumentHint: '[on|off|mute|status|voice <name>|config [voice <name>|animation <wave|bars|off>|silence <ms>|<target> <color>|reset]]',
       immediate: true,
     })
+    await $.command.register({
+      name: 'live-config',
+      description: 'Live voice settings: voice, colors, animation, end-of-speech silence',
+      argumentHint: '[voice <name>|animation <wave|bars|off>|silence <ms>|<target> <color>|reset]',
+      immediate: true,
+    })
 
     return next(e)
   })
@@ -582,61 +646,9 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('command.run', { command: 'live' }, async ($, e) => {
-    const command = parseLiveCommand(e.args)
-    switch (command.kind) {
-      case 'toggle':
-        if (live.isOn) {
-          await stop($)
-          return { text: 'Live voice off.' }
-        }
-        await start($)
-        return { text: `Live voice on. Speak; voice ${live.voice}.` }
-      case 'on':
-        await start($)
-        return { text: `Live voice on. Speak; voice ${live.voice}.` }
-      case 'off':
-        await stop($)
-        return { text: 'Live voice off.' }
-      case 'mute':
-        if (!live.isOn) return { text: 'Live voice is off.' }
-        live.isMuted = !live.isMuted
-        await writePause($)
-        await publish($)
-        return { text: live.isMuted ? 'Microphone muted.' : 'Microphone unmuted.' }
-      case 'status':
-        return { text: describe() }
-      case 'voice':
-      case 'config-voice':
-        await setVoice($, command.voice)
-        return { text: `Voice set to ${command.voice}.` }
-      case 'config': {
-        await loadVoices($)
-        // A dialog: it takes the keys, Esc closes it, toasts wait behind it.
-        const opened = await $.ui
-          .open({ id: CONFIG_PANE, title: 'Live voice settings', focus: true, closeOnEscape: true, holdToasts: true, rows: 12 })
-          .catch(() => undefined)
-        const head = opened?.isPlaced === true
-          ? 'Live voice settings opened (Esc closes).'
-          : 'Could not open the settings dialog here (a wider terminal shows it).'
-        return { text: `${head}\n${await summary($)}` }
-      }
-      case 'config-reset':
-        await resetSettings($)
-        return { text: 'Settings restored to the defaults.' }
-      case 'config-animation':
-        await setAnimation($, command.animation)
-        return { text: `Animation set to ${command.animation}.` }
-      case 'config-silence':
-        await setSilence($, command.silenceMs)
-        return { text: `End-of-speech silence set to ${command.silenceMs} ms.` }
-      case 'config-set':
-        await pickColor($, command.target, command.color)
-        return { text: `${command.target} color set to ${command.color}.` }
-      case 'error':
-        return { text: command.message || USAGE }
-    }
-  })
+  on('command.run', { command: 'live-config' }, ($, e) => answerLive($, `config ${e.args}`.trim()))
+
+  on('command.run', { command: 'live' }, ($, e) => answerLive($, e.args))
 
   on('turn.start', ($, e, next) => {
     const prompt = live.isOn ? claim(live.prompts, e.text) : undefined

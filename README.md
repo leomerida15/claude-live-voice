@@ -48,6 +48,7 @@ claude --plugin-dir /path/to/claude-live-voice
 | `/live voice <name>` | Changes the Kokoro voice, for example `ef_dora` or `em_alex`, and keeps it. |
 | `/live status` | Shows the current state, the voice and the queue. |
 | `/live config` | Opens the settings dialog: voice, colors, animation, end-of-speech silence. |
+| `/live-config` | The same dialog as `/live config`; every `/live config ...` shortcut works as `/live-config ...` (a command name cannot hold a colon, so there is no `/live:config`). |
 | `/live config voice <name>` | Sets the voice, like `/live voice`. |
 | `/live config <user\|agent\|dot\|idle> <color>` | Sets one color directly, for example `/live config agent magenta`. |
 | `/live config animation <wave\|bars\|off>` | How the band's wave moves. |
