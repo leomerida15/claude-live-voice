@@ -34,6 +34,8 @@ export type World = {
   store: Map<string, unknown>
   /** The ids of the panes the plugin opened, oldest first. */
   opened: string[]
+  /** The whole `$.ui.open` arguments, oldest first. */
+  openings: Record<string, unknown>[]
   /** Whether `$.ui.open` places the pane (false: it waits undrawn, as on a narrow terminal). */
   panes: { isPlaced: boolean }
   /** How speak.sh children end: their exit code and what they print on stderr. */
@@ -85,6 +87,7 @@ export function fakeWorld(on: On, transcript = 'hola mundo'): World {
     reply: { text: '' },
     store: new Map(),
     opened: [],
+    openings: [],
     panes: { isPlaced: true },
     speech: { code: 0, stderr: '' },
     toasts: [],
@@ -125,6 +128,7 @@ export function fakeWorld(on: On, transcript = 'hola mundo'): World {
   })
   on('ui.open', (_$, e) => {
     world.opened.push(e.id)
+    world.openings.push({ ...e })
 
     return { value: world.panes.isPlaced ? { isPlaced: true as const } : { isPlaced: false as const, reason: 'narrow terminal' } }
   })

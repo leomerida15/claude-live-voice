@@ -649,3 +649,45 @@ export function audioBarWaveWidth(columns: number, parts: readonly string[], gap
 
   return cells(columns - used - margin)
 }
+
+/**
+ * The cells a terminal Select takes, erring wide: its label and a space, its
+ * longest option (the label, else the value) and two for the painter's marks.
+ */
+export function selectWidth(label: string, options: readonly { value: string; label?: string }[]): number {
+  const head = label === '' ? 0 : cellWidth(label) + 1
+  const longest = options.reduce((most, option) => Math.max(most, cellWidth(option.label ?? option.value)), 0)
+
+  return head + longest + 2
+}
+
+/**
+ * Fields of these widths packed into rows, in order: each row takes the next
+ * field while it fits in `columns` with `gap` cells between fields; a field
+ * wider than `columns` gets a row of its own. Returns each row's field indexes.
+ */
+export function packRows(widths: readonly number[], columns: number, gap: number): number[][] {
+  const rows: number[][] = []
+  let used = 0
+  widths.forEach((width, index) => {
+    const row = rows.at(-1)
+    if (row !== undefined && used + gap + width <= columns) {
+      row.push(index)
+      used += gap + width
+      return
+    }
+    rows.push([index])
+    used = width
+  })
+
+  return rows
+}
+
+// An R G B row besides its bar: the channel letter, the 3-digit value, the
+// `q: −` and `w: +` buttons, and one cell between each of the five parts.
+const CHANNEL_ROW_PARTS = 1 + 3 + 4 + 4 + 4
+
+/** The cells an R G B bar gets in a row `columns` wide: what is left, 6 to 48. */
+export function channelBarWidth(columns: number): number {
+  return Math.min(48, Math.max(6, Math.trunc(columns) - CHANNEL_ROW_PARTS))
+}

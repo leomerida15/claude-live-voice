@@ -172,8 +172,8 @@ test('the dialog builds a custom color with the R G B buttons in coarse and fine
   await settle(world)
   expect(world.store.get('colors')).toMatchObject({ agent: '#00fefe' })
   const texts = (await pane.findAll({ type: 'Text' })).map(one => one.text)
-  expect(texts).toContain(`${'░'.repeat(20)}`)
-  expect(texts).toContain(`${'█'.repeat(20)}`)
+  expect(texts.some(text => /^░{6,}$/.test(text))).toBe(true)
+  expect(texts.some(text => /^█{6,}$/.test(text))).toBe(true)
   expect((await pane.find({ key: 'color-agent' }))?.props.value).toBe('#00fefe')
 
   await pane.press({ key: 'theme-success' })

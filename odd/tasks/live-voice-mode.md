@@ -115,6 +115,15 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
   `Dora (female)`. The language defaults to the current voice's; changing it does not change the voice until
   one is picked. The language choice lives in the `editor` state (`voiceLanguage`). A pure `selectOptions`
   guard caps any option list at 64 (sorted input kept in order). Test-first with the real 67 Kokoro ids.
+- [x] T24 Wider, non-wrapping settings dock (live session, fullscreen 189 columns: the pane docked on the
+  right ~50 columns wide; each RGB bar split over two lines, value digits split, the voice row wrapped). Open
+  with `columns: 100` (the dock's width request; the person's drag wins) besides `rows` inline. The layout
+  reads the Pane's `bodyColumns` and packs compact fields into rows that fit (a pure `packRows`): language,
+  voice and Test on one row when wide; the current voice truncated at the end; the four color pickers with a
+  colored dot; one R/G/B row each with its bar sized to what is left (min 6 cells) and a 3-digit padded value;
+  step, preview, animation, silence, Restore, Close. Keys, hotkeys and behavior unchanged; Selects <= 64.
+  Test-first: mount at 50 and 100 columns, no drawn row wider than the body, each RGB row one Box holding its
+  value, `$.ui.open` called with `columns: 100`.
 
 ## Acceptance criteria
 - `claude plugin validate .` passes; type-check passes; `claude plugin test .` passes.
@@ -134,6 +143,7 @@ ask-on-risk. Forecast ~600 authored lines.
   text.ts, types, tests, docs).
   T19: delegated direct (writer trigger: register.tsx, text.ts, tests, docs).
   T23: delegated direct (writer trigger: register.tsx, text.ts, types, tests, docs).
+  T24: delegated direct (writer trigger: register.tsx, text.ts, tests, docs).
 
 ## Out of scope (hardening)
 Barge-in, global keybindings, cloud providers.
@@ -412,6 +422,19 @@ Barge-in, global keybindings, cloud providers.
   the picker follows the voice again after a voice change or when the dialog opens. Pane rows: 23 (was 22).
   Not verified: the dialog in a live terminal with the real Kokoro.
   Commit: see git log (`fix: two-step voice picker within the 64-option Select limit`).
+
+- T24 done (route: delegated direct; writer trigger: register.tsx, text.ts, tests, docs). RED: `claude plugin
+  test .` -> 105 pass, 1 fail (`test/layout.test.tsx`: `$.ui.open` had no `columns`; the old tree also drew a
+  50+2+13-cell voice row at a 50-column dock). GREEN: 107 pass, 0 fail (mounted docked at 50 and 100 body
+  columns: no row Box wider than the body by a cell estimate erring wide, each R/G/B row one Box with its bar
+  >= 6 cells and a 3-digit value; at 100 language, voice and Test share a row; `packRows`, `channelBarWidth`,
+  `selectWidth` unit tests). `claude plugin validate .` passed (1 expected CLAUDE.md warning); python 23 OK;
+  `bash -n scripts/speak.sh` ok; tsc no output. Decisions: the drawable width is the Pane's `bodyColumns`; rows
+  pack to it less a 2-cell margin; a Select is estimated as label + space + longest option + 2 marks; inline
+  rows request lowered to 16 (the compact layout needs ~11 wide); labels shortened (`fine`, `coarse (16)`,
+  `Silence ms`, `Close (Esc)`, R/G/B), keys and hotkeys unchanged. Not verified: how the terminal actually
+  paints a Select's width and the dock at 100 columns in a live session.
+  Commit: see git log (`fix: wider settings dock whose rows fit its width`).
 
 ## Next step
 The human runs `docs/smoke-test.md` with the microphone and reports failed steps. Not verified yet:

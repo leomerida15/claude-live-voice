@@ -18,6 +18,7 @@ import {
   barsRow,
   cellWidth,
   channelBar,
+  channelBarWidth,
   cleanTranscript,
   customBase,
   flatRow,
@@ -29,9 +30,11 @@ import {
   parseColor,
   parseListenerLine,
   parseLiveCommand,
+  packRows,
   safeSessionId,
   sampleText,
   selectOptions,
+  selectWidth,
   sessionTag,
   rgbToHex,
   smoothLevel,
@@ -67,15 +70,16 @@ const COLOR_LABELS: Record<keyof LiveVoiceColors, string> = {
   dot: 'Live dot       ',
   idle: 'Idle line      ',
 }
+// The dialog's color pickers, compact so four fit on a row of a wide dock.
+const SHORT_COLOR_LABELS: Record<keyof LiveVoiceColors, string> = { user: 'You', agent: 'Claude', dot: 'Dot', idle: 'Idle' }
 // The R G B bars: each channel's name, the color its bar is drawn in, and
 // the hotkeys of its − and + buttons (unique in the pane: t tests the voice,
 // 1 and 2 set the step).
 const CHANNELS = [
-  { key: 'red', label: 'Red  ', color: '#ff0000', down: 'q', up: 'w' },
-  { key: 'green', label: 'Green', color: '#00ff00', down: 'a', up: 's' },
-  { key: 'blue', label: 'Blue ', color: '#0000ff', down: 'z', up: 'x' },
+  { key: 'red', label: 'R', color: '#ff0000', down: 'q', up: 'w' },
+  { key: 'green', label: 'G', color: '#00ff00', down: 'a', up: 's' },
+  { key: 'blue', label: 'B', color: '#0000ff', down: 'z', up: 'x' },
 ] as const
-const BAR_CELLS = 20
 // The `$.store` keys of the settings kept beside `colors`.
 const STORED = ['voice', 'animation', 'silenceMs'] as const
 
@@ -661,8 +665,9 @@ const answerLive = async ($: $, args: string) => {
       await loadVoices($)
       await followVoice($)
       // A dialog: it takes the keys, Esc closes it, toasts wait behind it.
+      // `rows` sizes it inline, `columns` docked (the person's own drag wins).
       const opened = await $.ui
-        .open({ id: CONFIG_PANE, title: 'Live voice settings', focus: true, closeOnEscape: true, holdToasts: true, rows: 23 })
+        .open({ id: CONFIG_PANE, title: 'Live voice settings', focus: true, closeOnEscape: true, holdToasts: true, rows: 16, columns: 100 })
         .catch(() => undefined)
       const head = opened?.isPlaced === true
         ? 'Live voice settings opened (Esc closes).'
@@ -902,30 +907,62 @@ export const register: Register = (on, options) => {
     const voices = picker.voices.map(voice => voice.id)
     const silences = SILENCES.includes(current.silenceMs) ? SILENCES : [...SILENCES, current.silenceMs].sort((a, b) => a - b)
 
-    return (
-      <Box flexDirection="column">
-        <Text dimColor>Live voice, kept for later sessions. Esc closes.</Text>
-        <Select
-          key="voice-language"
-          label="Language        "
-          options={picker.languages.map(language => ({ value: language }))}
-          value={picker.language}
-          autoFocus
-          onSelect={(value: string) => {
-            if (picker.languages.includes(value)) void setEditor($, { voiceLanguage: value })
-          }}
-        />
-        <Select
-          key="voice"
-          label="Voice           "
-          options={voices.map(voice => ({ value: voice, label: voiceChoice(voice) }))}
-          {...(voices.includes(current.voice) ? { value: current.voice } : {})}
-          onSelect={(value: string) => {
-            if (voices.includes(value)) void setVoice($, value)
-          }}
-        />
-        <Box flexDirection="row" gap={2}>
-          <Text dimColor>{`                 ${voiceLabel(current.voice)}`}</Text>
+    // The room the dock (or the inline block) gives, less a margin for a
+    // painter that draws a mark wider than counted: every row fits on one line.
+    const room = Math.max(1, e.props.bodyColumns - 2)
+    const barCells = channelBarWidth(room)
+    const languageOptions = picker.languages.map(language => ({ value: language }))
+    const voiceOptions = voices.map(voice => ({ value: voice, label: voiceChoice(voice) }))
+    const targetOptions = COLOR_TARGETS.map(target => ({ value: target, label: COLOR_LABELS[target].trim() }))
+    const animationOptions = ANIMATIONS.map(animation => ({ value: animation }))
+    const silenceOptions = silences.map(ms => ({ value: String(ms) }))
+    const preview = waveFrame(0)
+    const stepFine = 'fine'
+    const stepCoarse = `coarse (${COARSE})`
+    const closeLabel = 'Close (Esc)'
+    // Fields packed into as many rows as the room needs, two cells apart.
+    type Field = { width: number; node: JSX.Element }
+    const GAP = 2
+    const pack = (key: string, fields: Field[]) =>
+      packRows(fields.map(field => field.width), room, GAP).map((row, index) => (
+        <Box key={`${key}-${index}`} flexDirection="row" gap={GAP}>
+          {row.map(at => fields[at]?.node)}
+        </Box>
+      ))
+
+    const voiceFields: Field[] = [
+      {
+        width: selectWidth('Language', languageOptions),
+        node: (
+          <Select
+            key="voice-language"
+            label="Language"
+            options={languageOptions}
+            value={picker.language}
+            autoFocus
+            onSelect={(value: string) => {
+              if (picker.languages.includes(value)) void setEditor($, { voiceLanguage: value })
+            }}
+          />
+        ),
+      },
+      {
+        width: selectWidth('Voice', voiceOptions),
+        node: (
+          <Select
+            key="voice"
+            label="Voice"
+            options={voiceOptions}
+            {...(voices.includes(current.voice) ? { value: current.voice } : {})}
+            onSelect={(value: string) => {
+              if (voices.includes(value)) void setVoice($, value)
+            }}
+          />
+        ),
+      },
+      {
+        width: cellWidth('t: Test voice'),
+        node: (
           <Button
             key="test-voice"
             plain
@@ -936,11 +973,17 @@ export const register: Register = (on, options) => {
               if (answer.startsWith('Live voice is busy')) $.ui.toast(`live-voice: ${answer}`)
             }}
           />
-        </Box>
-        {COLOR_TARGETS.map(target => (
+        ),
+      },
+    ]
+    const colorFields: Field[] = COLOR_TARGETS.map(target => ({
+      width: cellWidth(SHORT_COLOR_LABELS[target]) + 1 + 1 + 1 + selectWidth('', colorOptions(target)),
+      node: (
+        <Box key={`color-row-${target}`} flexDirection="row" gap={1}>
+          <Text>{SHORT_COLOR_LABELS[target]}</Text>
+          <Text color={now[target]}>●</Text>
           <Select
             key={`color-${target}`}
-            label={`${COLOR_LABELS[target]} `}
             options={colorOptions(target)}
             value={now[target]}
             onSelect={(value: string) => {
@@ -948,68 +991,117 @@ export const register: Register = (on, options) => {
               if (color !== undefined) void pickColor($, target, color)
             }}
           />
-        ))}
-        <Select
-          key="edit-target"
-          label="Edit color      "
-          options={COLOR_TARGETS.map(target => ({ value: target, label: COLOR_LABELS[target].trim() }))}
-          value={editing.target}
-          onSelect={(value: string) => {
-            const target = COLOR_TARGETS.find(one => one === value)
-            if (target !== undefined) void setEditor($, { target })
-          }}
-        />
-        <Box flexDirection="row" gap={1}>
-          <Text>{'  Theme         '}</Text>
-          {THEME_COLORS.map(key => (
-            <Button key={`theme-${key}`} plain onPress={() => void pickColor($, editing.target, key)}>
-              <Text color={key}>●</Text>
-            </Button>
-          ))}
         </Box>
+      ),
+    }))
+    const editFields: Field[] = [
+      {
+        width: selectWidth('Edit', targetOptions),
+        node: (
+          <Select
+            key="edit-target"
+            label="Edit"
+            options={targetOptions}
+            value={editing.target}
+            onSelect={(value: string) => {
+              const target = COLOR_TARGETS.find(one => one === value)
+              if (target !== undefined) void setEditor($, { target })
+            }}
+          />
+        ),
+      },
+      {
+        width: cellWidth('Theme') + 2 * THEME_COLORS.length,
+        node: (
+          <Box key="theme-row" flexDirection="row" gap={1}>
+            <Text>Theme</Text>
+            {THEME_COLORS.map(key => (
+              <Button key={`theme-${key}`} plain onPress={() => void pickColor($, editing.target, key)}>
+                <Text color={key}>●</Text>
+              </Button>
+            ))}
+          </Box>
+        ),
+      },
+    ]
+    const stepFields: Field[] = [
+      {
+        width: cellWidth('Step') + 1 + cellWidth(`1: ${stepFine}`) + 1 + cellWidth(`2: ${stepCoarse}`),
+        node: (
+          <Box key="step-row" flexDirection="row" gap={1}>
+            <Text>Step</Text>
+            <Button key="step-fine" plain hotkey="1" label={stepFine} dimColor={editing.step !== FINE} onPress={() => void setEditor($, { step: FINE })} />
+            <Button key="step-coarse" plain hotkey="2" label={stepCoarse} dimColor={editing.step !== COARSE} onPress={() => void setEditor($, { step: COARSE })} />
+          </Box>
+        ),
+      },
+      {
+        width: cellWidth('Preview') + 1 + cellWidth(preview) + 1 + cellWidth(edited),
+        node: (
+          <Box key="preview-row" flexDirection="row" gap={1}>
+            <Text>Preview</Text>
+            <Text color={edited}>{preview}</Text>
+            <Text dimColor>{edited}</Text>
+          </Box>
+        ),
+      },
+    ]
+    const timingFields: Field[] = [
+      {
+        width: selectWidth('Animation', animationOptions),
+        node: (
+          <Select
+            key="animation"
+            label="Animation"
+            options={animationOptions}
+            value={current.animation}
+            onSelect={(value: string) => {
+              const animation = ANIMATIONS.find(one => one === value)
+              if (animation !== undefined) void setAnimation($, animation)
+            }}
+          />
+        ),
+      },
+      {
+        width: selectWidth('Silence ms', silenceOptions),
+        node: (
+          <Select
+            key="silence"
+            label="Silence ms"
+            options={silenceOptions}
+            value={String(current.silenceMs)}
+            onSelect={(value: string) => {
+              const ms = Number(value)
+              if (silences.includes(ms)) void setSilence($, ms)
+            }}
+          />
+        ),
+      },
+    ]
+    const actionFields: Field[] = [
+      { width: cellWidth('Restore'), node: <Button key="restore" plain label="Restore" onPress={() => void resetSettings($)} /> },
+      { width: cellWidth(closeLabel), node: <Button key="close" plain label={closeLabel} onPress={() => void $.ui.close({ id: CONFIG_PANE })} /> },
+    ]
+
+    return (
+      <Box flexDirection="column">
+        <Text dimColor wrap="truncate-end">Live voice, kept for later sessions. Esc closes.</Text>
+        {pack('voice', voiceFields)}
+        <Text dimColor wrap="truncate-end">{`Now  ${voiceLabel(current.voice)}`}</Text>
+        {pack('colors', colorFields)}
+        {pack('edit', editFields)}
         {CHANNELS.map((one, index) => (
-          <Box flexDirection="row" gap={1}>
-            <Text>{`  ${one.label}         `}</Text>
-            <Button key={`${one.key}-down`} plain hotkey={one.down} label="−" onPress={() => void nudgeChannel($, index as 0 | 1 | 2, -1)} />
-            <Text color={one.color}>{channelBar(rgb[index] ?? 0, BAR_CELLS)}</Text>
-            <Button key={`${one.key}-up`} plain hotkey={one.up} label="+" onPress={() => void nudgeChannel($, index as 0 | 1 | 2, 1)} />
+          <Box key={`${one.key}-row`} flexDirection="row" gap={1}>
+            <Text>{one.label}</Text>
+            <Text color={one.color}>{channelBar(rgb[index] ?? 0, barCells)}</Text>
             <Text>{String(rgb[index] ?? 0).padStart(3)}</Text>
+            <Button key={`${one.key}-down`} plain hotkey={one.down} label="−" onPress={() => void nudgeChannel($, index as 0 | 1 | 2, -1)} />
+            <Button key={`${one.key}-up`} plain hotkey={one.up} label="+" onPress={() => void nudgeChannel($, index as 0 | 1 | 2, 1)} />
           </Box>
         ))}
-        <Box flexDirection="row" gap={2}>
-          <Text>{'  Step          '}</Text>
-          <Button key="step-fine" plain hotkey="1" label="fine (1)" dimColor={editing.step !== FINE} onPress={() => void setEditor($, { step: FINE })} />
-          <Button key="step-coarse" plain hotkey="2" label="coarse (16)" dimColor={editing.step !== COARSE} onPress={() => void setEditor($, { step: COARSE })} />
-        </Box>
-        <Box flexDirection="row" gap={1}>
-          <Text>{'  Preview       '}</Text>
-          <Text color={edited}>{waveFrame(0)}</Text>
-          <Text dimColor>{edited}</Text>
-        </Box>
-        <Select
-          key="animation"
-          label="Animation       "
-          options={ANIMATIONS.map(animation => ({ value: animation }))}
-          value={current.animation}
-          onSelect={(value: string) => {
-            const animation = ANIMATIONS.find(one => one === value)
-            if (animation !== undefined) void setAnimation($, animation)
-          }}
-        />
-        <Select
-          key="silence"
-          label="End silence (ms)"
-          options={silences.map(ms => ({ value: String(ms) }))}
-          value={String(current.silenceMs)}
-          onSelect={(value: string) => {
-            const ms = Number(value)
-            if (silences.includes(ms)) void setSilence($, ms)
-          }}
-        />
-        <Box flexDirection="row" gap={2}>
-          <Button key="restore" plain label="Restore" onPress={() => void resetSettings($)} />
-          <Button key="close" plain label="Close" onPress={() => void $.ui.close({ id: CONFIG_PANE })} />
-        </Box>
+        {pack('step', stepFields)}
+        {pack('timing', timingFields)}
+        {pack('actions', actionFields)}
       </Box>
     )
   })

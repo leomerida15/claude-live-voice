@@ -103,8 +103,10 @@ once instead.
 
 `/live config` opens a dialog with one picker per setting, plus `Restore` (the
 defaults) and `Close`; `Esc` closes it too. Changes take at once and are kept
-for later sessions. Where the dialog cannot be shown, `/live config` answers
-with every current setting and the commands that change them.
+for later sessions. In fullscreen the dialog docks beside the transcript and
+asks for 100 columns (a width you drag it to wins); its rows pack to the width
+it gets, so nothing wraps. Where the dialog cannot be shown, `/live config`
+answers with every current setting and the commands that change them.
 
 | Setting | What it changes | Default |
 | --- | --- | --- |
