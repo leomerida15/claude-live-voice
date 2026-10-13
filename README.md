@@ -54,6 +54,24 @@ While live mode is on, a band above the prompt shows
 spoken and which voice is in use. Focus the band with `ctrl+x tab`, then press
 `m` to mute or unmute, or `s` to stop speaking.
 
+To mute or stop straight from the prompt, bind chords in
+`~/.claude/keybindings.json`. A mod cannot define its own keybinding actions,
+so the band's buttons borrow two that Claude Code does not act on:
+`permission:toggleDebug` presses Mute and `footer:dismiss` presses Stop.
+
+```json
+{
+  "bindings": [
+    { "context": "Global", "bindings": { "meta+space": "permission:toggleDebug", "meta+s": "footer:dismiss" } }
+  ]
+}
+```
+
+`meta` is Alt on Linux. Use a chord or a modified key: a bare letter does not
+reach the band. `ctrl+m` is Enter in a terminal, and many desktops keep
+`Super+Space` for themselves. If a chord does nothing, run `claude --debug` to
+see binding warnings, or try the `Chat` context.
+
 Press `Esc` while Claude answers to interrupt the turn. That also stops playback
 and drops the sentences still waiting to be spoken.
 

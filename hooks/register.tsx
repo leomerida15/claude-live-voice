@@ -290,6 +290,12 @@ const describe = () =>
     : `Live voice is off. Voice ${live.voice}.`
 
 
+// A mod cannot name keybinding actions of its own, so the band borrows two the
+// engine does not act on: a chord the person binds to one in
+// ~/.claude/keybindings.json presses the button from the prompt.
+const MUTE_ACTION = 'permission:toggleDebug'
+const STOP_ACTION = 'footer:dismiss'
+
 export const register: Register = (on, options) => {
   live.voice = String(options.voice ?? live.voice)
   config.language = String(options.language ?? config.language)
@@ -422,6 +428,7 @@ export const register: Register = (on, options) => {
         <Button
           key="mute"
           hotkey="m"
+          action={MUTE_ACTION}
           label={live.isMuted ? 'Unmute' : 'Mute'}
           onPress={async () => {
             live.isMuted = !live.isMuted
@@ -429,7 +436,7 @@ export const register: Register = (on, options) => {
             await publish($)
           }}
         />
-        <Button key="stop" hotkey="s" label="Stop" onPress={() => void silence($)} />
+        <Button key="stop" hotkey="s" action={STOP_ACTION} label="Stop" onPress={() => void silence($)} />
       </Box>
     )
   })

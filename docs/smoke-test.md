@@ -52,6 +52,8 @@ Mark each step pass or fail and note what you heard or saw on a failure.
 ## 6. Controls
 
 - [ ] `/live mute`: band shows `muted`; speaking produces no prompt. `/live mute` again unmutes.
+- [ ] With the chords from the README bound, `Alt+Space` in the prompt toggles mute and `Alt+S`
+  stops speech, without focusing the band. Typing in the prompt is not affected.
 - [ ] `ctrl+x tab` focuses the band; `m` toggles mute; `s` stops speech mid-sentence.
 - [ ] `Esc` during a spoken reply aborts the turn, stops playback at once and drops the queue.
 - [ ] `/live voice em_alex`, ask something: the new voice is used. `/live status` reports it.

@@ -51,6 +51,11 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
 - [x] T9 Echo-guard tunables: `userConfig` options for the post-playback tail and the VAD thresholds,
   passed to `listen.py` as flags; defaults unchanged. Test-first (python + engine tests).
 - [x] T10 Interactive smoke-test checklist for the human (`docs/smoke-test.md`), linked from the README.
+- [x] T11 Prompt-level chords for the band (authorized 2026-10-13): the Mute and Stop buttons also declare
+  `action` with engine keybinding actions the engine ignores (`permission:toggleDebug` for mute,
+  `footer:dismiss` for stop), so a chord the user binds in `~/.claude/keybindings.json` (suggested
+  `meta+space`, `meta+s`) presses them from the prompt. A mod cannot define its own action names.
+  Docs: README and smoke test. Test-first where the test kit can press a Button by action.
 
 ## Acceptance criteria
 - `claude plugin validate .` passes; type-check passes; `claude plugin test .` passes.
@@ -166,6 +171,11 @@ Barge-in, global keybindings, cloud providers.
   - R4 hot-reload `recover` runs detached with no catch; a failed mkdir/start leaves the band `listening`
     with no listener. `hooks/register.tsx:262`.
   - R2 suggestions: duplicated test helpers, `forgetChildren` naming, three names for the VAD threshold.
+
+- T11 done (route: inline; one non-trivial file plus docs). RED: `claude plugin test .` -> 38 pass, 1 fail
+  (`Expected: "permission:toggleDebug"`, `Received: undefined` on the Mute button). GREEN: 39 pass, 0 fail.
+  `claude plugin validate .` passed (expected CLAUDE.md warning); `tsc -p <scratchpad tsconfig>` no errors.
+  Not verified: that the user's chord reaches the band in a live terminal (in the smoke test).
 
 ## Next step
 The human runs `docs/smoke-test.md` with the microphone and reports failed steps. Not verified yet:

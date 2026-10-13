@@ -67,6 +67,9 @@ interactive smoke test is in `docs/smoke-test.md`.
   top level of the module: keep every `$`-taking helper at module scope.
 - Long work must be detached from hooks (hook time budget): start it with
   `$.clock.after(0, ...)` and return; never await the listener loop in a hook.
+- A Button's `action` must name an existing engine keybinding action; a mod
+  cannot define its own. The band borrows inert ones (`permission:toggleDebug`,
+  `footer:dismiss`) that the person binds to chords in `keybindings.json`.
 - A hot reload runs `register` and `session.start` again: module variables
   start over, `$.state` stays.
 - A plugin's `$.prompt.submit` runs once the session is idle. Other plugins'
