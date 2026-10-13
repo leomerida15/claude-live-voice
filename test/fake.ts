@@ -26,6 +26,8 @@ export type World = {
   playback: { hold: boolean; release: () => void }
   /** How many `$.state` writes the plugin made: an idle mod makes none. */
   stateWrites: () => number
+  /** The `status` value the plugin wrote last to `$.state`. */
+  lastStatus: () => unknown
   /** The text the model streams for the next turn.step. */
   reply: { text: string }
   /** The plugin's `$.store`, kept across sessions: seed it to stand for an earlier one. */
@@ -47,6 +49,7 @@ export function fakeWorld(on: On, transcript = 'hola mundo'): World {
   let wake = () => {}
   let releases: (() => void)[] = []
   let stateWrites = 0
+  let lastStatus: unknown
   const world: World = {
     runs: [],
     spawns: [],
@@ -70,12 +73,14 @@ export function fakeWorld(on: On, transcript = 'hola mundo'): World {
       },
     },
     stateWrites: () => stateWrites,
+    lastStatus: () => lastStatus,
     reply: { text: '' },
     store: new Map(),
     opened: [],
   }
   on('state.set', (_$, e, next) => {
     stateWrites += 1
+    if (e.key === 'status') lastStatus = e.value
 
     return next(e)
   })

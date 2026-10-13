@@ -287,9 +287,6 @@ export function parseListenerLine(line: string): ListenerLine | undefined {
 const BLOCKS = '▁▂▃▄▅▆▇█'
 const LOWEST = '▁'
 
-/** How many mic levels the meter keeps: the widest band it scrolls across. */
-export const METER_CAP = 200
-
 /** A width in whole cells, never negative. */
 const cells = (width: number) => Math.max(0, Math.trunc(Number.isFinite(width) ? width : 0))
 
@@ -305,12 +302,43 @@ export function flatRow(width: number): string {
   return LOWEST.repeat(cells(width))
 }
 
-/** The newest levels as blocks, exactly `width` cells: newest right, padded with the lowest block on the left. */
-export function meterRow(levels: readonly number[], width: number): string {
-  const size = cells(width)
-  const glyphs = size === 0 ? '' : levels.slice(-size).map(levelGlyph).join('')
+/** A number clamped to 0..1, NaN and infinities read as 0. */
+const unit = (value: number) => Math.min(1, Math.max(0, Number.isFinite(value) ? value : 0))
 
-  return flatRow(size - glyphs.length) + glyphs
+// How much of a new mic level the shown level takes at once: most of a rise
+// (the wave jumps with the voice), a little of a fall (it settles, no flicker).
+const ATTACK = 0.6
+const DECAY = 0.2
+
+/** The shown mic level after hearing `level`: a fast attack and a slow decay. */
+export function smoothLevel(shown: number, level: number): number {
+  const from = unit(shown)
+  const to = unit(level)
+
+  return from + (to - from) * (to > from ? ATTACK : DECAY)
+}
+
+// The ripple's height at silence, as a share of the full wave.
+const RIPPLE = 0.12
+
+/**
+ * Frame `frame` of the listening wave, exactly `width` cells: the whole line
+ * moves a step each frame, two sines beating so it looks like sound, its
+ * height scaled by the mic level (0..1): a low ripple at silence, a tall
+ * bouncing wave when loud.
+ */
+export function bounceRow(frame: number, level: number, width: number): string {
+  const size = cells(width)
+  const amplitude = RIPPLE + (1 - RIPPLE) * unit(level)
+  const step = Math.trunc(Number.isFinite(frame) ? frame : 0)
+  let row = ''
+  for (let cell = 0; cell < size; cell += 1) {
+    const fast = Math.sin((cell + step) * 0.9)
+    const slow = Math.sin((cell - step * 0.6) * 0.37 + 1)
+    row += levelGlyph(amplitude * (0.5 + 0.3 * fast + 0.2 * slow))
+  }
+
+  return row
 }
 
 const WAVE = '▂▃▅▇▅▃▂▁'

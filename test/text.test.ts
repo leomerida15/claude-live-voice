@@ -13,9 +13,9 @@ import {
   cleanTranscript,
   killPattern,
   flatRow,
+  bounceRow,
   levelGlyph,
-  METER_CAP,
-  meterRow,
+  smoothLevel,
   parseListenerLine,
   parseLiveCommand,
   sessionTag,
@@ -224,14 +224,37 @@ describe('meter', () => {
     expect(levelGlyph(9)).toBe('█')
   })
 
-  test('meterRow draws the newest levels at exactly its width, padded on the left', () => {
-    expect(meterRow([], 4)).toBe('▁▁▁▁')
-    expect(meterRow([1, 0.5], 4)).toBe('▁▁█▅')
-    expect(meterRow([0, 0, 0, 0, 0, 1], 4)).toBe('▁▁▁█')
-    expect([...meterRow([0.3, 1], 120)]).toHaveLength(120)
-    expect(meterRow([1], 0)).toBe('')
-    expect(meterRow([1], -3)).toBe('')
-    expect(meterRow([1], 2.7)).toBe('▁█')
+  test('bounceRow is a moving wave of exactly its width whose height follows the level', () => {
+    const height = (row: string) => [...row].reduce((sum, glyph) => sum + '▁▂▃▄▅▆▇█'.indexOf(glyph), 0) / [...row].length
+    expect([...bounceRow(0, 0.5, 70)]).toHaveLength(70)
+    expect([...bounceRow(3, 1, 7)]).toHaveLength(7)
+    expect(bounceRow(0, 1, 0)).toBe('')
+    expect(bounceRow(0, 1, -2)).toBe('')
+    // Silence: a low ripple, never above the second block.
+    expect(bounceRow(0, 0, 70)).toMatch(/^[▁▂]+$/)
+    // Louder is taller, on average and at its peak.
+    expect(height(bounceRow(0, 0.5, 70))).toBeGreaterThan(height(bounceRow(0, 0, 70)) + 1)
+    expect(height(bounceRow(0, 1, 70))).toBeGreaterThan(height(bounceRow(0, 0.5, 70)) + 1)
+    expect(bounceRow(0, 1, 70)).toMatch(/[▇█]/)
+    // The whole line moves from one frame to the next, at any level.
+    expect(bounceRow(1, 0.6, 70)).not.toBe(bounceRow(0, 0.6, 70))
+    expect(bounceRow(1, 0, 70)).not.toBe(bounceRow(0, 0, 70))
+    // Out-of-range levels are clamped.
+    expect(bounceRow(2, 7, 30)).toBe(bounceRow(2, 1, 30))
+    expect(bounceRow(2, -1, 30)).toBe(bounceRow(2, 0, 30))
+  })
+
+  test('smoothLevel rises fast and falls slowly', () => {
+    const up = smoothLevel(0, 1)
+    expect(up).toBeGreaterThan(0.5)
+    const down = smoothLevel(1, 0)
+    expect(down).toBeGreaterThan(0.6)
+    expect(down).toBeLessThan(1)
+    expect(smoothLevel(0.4, 0.4)).toBe(0.4)
+    expect(smoothLevel(0, Number.NaN)).toBe(0)
+    let level = 1
+    for (let i = 0; i < 20; i += 1) level = smoothLevel(level, 0)
+    expect(level).toBeLessThan(0.05)
   })
 
   test('flatRow is the lowest block at exactly its width', () => {
@@ -271,10 +294,6 @@ describe('meter', () => {
     expect(liveColors({ user: 'blue', agent: 'pink', dot: 7 })).toEqual({ ...DEFAULT_COLORS, user: 'blue' })
     expect(liveColors('red')).toEqual(DEFAULT_COLORS)
     expect(liveColors([1])).toEqual(DEFAULT_COLORS)
-  })
-
-  test('METER_CAP bounds the kept history', () => {
-    expect(METER_CAP).toBe(200)
   })
 
   test('wave loops through its frames at a fixed width', () => {

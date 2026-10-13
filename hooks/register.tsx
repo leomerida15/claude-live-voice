@@ -11,17 +11,17 @@ import {
   USAGE,
   claim,
   audioBarWaveWidth,
+  bounceRow,
   cellWidth,
   cleanTranscript,
   flatRow,
   killPattern,
   liveColors,
-  METER_CAP,
-  meterRow,
   parseListenerLine,
   parseLiveCommand,
   safeSessionId,
   sessionTag,
+  smoothLevel,
   tunable,
   waveRow,
 } from './text.ts'
@@ -30,7 +30,7 @@ import type { SubmittedPrompt } from './text.ts'
 type $ = EngineInterface
 type Child = HookStream<ProcessSpawnChunk, ProcessSpawnResult>
 
-const OFF: LiveVoiceStatus = { isOn: false, state: 'off', queue: 0, voice: '', levels: [], wave: 0, dot: false }
+const OFF: LiveVoiceStatus = { isOn: false, state: 'off', queue: 0, voice: '', level: 0, wave: 0, dot: false }
 const status = atom({ plugin: 'live-voice', key: 'status' } as const, OFF)
 const colors = atom({ plugin: 'live-voice', key: 'colors' } as const, DEFAULT_COLORS)
 
@@ -44,8 +44,9 @@ const COLOR_LABELS: Record<keyof LiveVoiceColors, string> = {
 }
 
 const STT_TIMEOUT_MS = 60_000
-// The band's clock while live voice is on: the speaking wave moves one frame
-// a tick (8 redraws a second), the live dot blinks every BLINK_TICKS ticks.
+// The band's clock while live voice is on: the wave moves one frame a tick
+// while listening or speaking (8 redraws a second), the live dot blinks every
+// BLINK_TICKS ticks.
 const TICK_MS = 125
 const BLINK_TICKS = 4
 
@@ -64,18 +65,15 @@ const live = {
   prompts: [] as SubmittedPrompt[],
   // Live turns by id, each with the chunker of its spoken reply.
   turns: new Map<string, SentenceChunker>(),
-  // The newest mic levels (0..1) from listen.py while listening, at most
-  // METER_CAP, for the meter.
-  levels: [] as number[],
-  // The band's ticks, the speaking wave's frame, the live dot, and the timer
-  // that moves them while live voice is on.
+  // The mic level (0..1) the listening wave shows: listen.py's levels,
+  // smoothed (fast attack, slow decay); 0 unless listening.
+  level: 0,
+  // The band's ticks, the wave's frame, the live dot, and the timer that
+  // moves them while live voice is on.
   ticks: 0,
   waveTick: 0,
   dot: true,
   ticker: undefined as Timer | undefined,
-  // The levels as last published, drawn at full history width, so levels
-  // that draw the same are not redrawn.
-  meter: '',
 }
 
 // Settings and paths, filled by register (options) and session.start (paths).
@@ -109,33 +107,31 @@ const stateNow = (): LiveVoiceState => {
 
 const publish = ($: $) => {
   const state = stateNow()
-  // Levels heard before a pause (speech, mute, an utterance) are stale after it.
-  if (state !== 'listening') live.levels = []
-  live.meter = meterRow(live.levels, METER_CAP)
+  // A level heard before a pause (speech, mute, an utterance) is stale after it.
+  if (state !== 'listening') live.level = 0
 
   return update($, status, () => ({
     isOn: live.isOn,
     state,
     queue: live.queue.length,
     voice: live.voice,
-    levels: [...live.levels],
+    level: Math.round(live.level * 100) / 100,
     wave: live.waveTick,
     dot: live.dot,
   }))
 }
 
-// Keeps the newest levels, only while listening: ones heard in any other
-// state (muted, transcribing, thinking) would leak into the next meter.
-// Redraws only when the meter, as drawn, changed.
-const hearLevels = async ($: $, levels: number[]) => {
+// Follows the mic level, only while listening: levels heard in any other
+// state (muted, transcribing, thinking) would leak into the next wave. The
+// band's timer draws it, so levels never redraw on their own.
+const hearLevels = (levels: number[]) => {
   if (stateNow() !== 'listening') return
-  live.levels = [...live.levels, ...levels].slice(-METER_CAP)
-  if (meterRow(live.levels, METER_CAP) !== live.meter) await publish($)
+  for (const level of levels) live.level = smoothLevel(live.level, level)
 }
 
-// Moves the wave while speaking and blinks the dot while not muted; redraws
-// only when one of them changed. One timer, started with live voice and
-// stopped with it.
+// Moves the wave while listening or speaking and blinks the dot while not
+// muted; redraws only when one of them changed. One timer, started with live
+// voice and stopped with it.
 const startTicker = ($: $) => {
   stopTicker()
   live.ticks = 0
@@ -145,9 +141,10 @@ const startTicker = ($: $) => {
     const dot = Math.floor(live.ticks / BLINK_TICKS) % 2 === 0
     const hasBlinked = dot !== live.dot
     live.dot = dot
-    const isSpeaking = stateNow() === 'speaking'
-    if (isSpeaking) live.waveTick += 1
-    if (isSpeaking || (hasBlinked && !live.isMuted)) void publish($).catch(() => undefined)
+    const state = stateNow()
+    const isMoving = state === 'listening' || state === 'speaking'
+    if (isMoving) live.waveTick += 1
+    if (isMoving || (hasBlinked && !live.isMuted)) void publish($).catch(() => undefined)
   })
 }
 
@@ -219,8 +216,7 @@ const transcribe = async ($: $, wav: string) => {
 }
 
 // Reads the listener's stdout, lines split across chunks: a WAV path per
-// utterance, and meter levels (about 8 a second). The levels of one chunk
-// make at most one redraw, so the meter redraws no faster than they come.
+// utterance, and mic levels (about 8 a second) for the listening wave.
 const listen = async ($: $, child: Child) => {
   let pending = ''
   try {
@@ -240,7 +236,7 @@ const listen = async ($: $, child: Child) => {
         }
         newline = pending.indexOf('\n')
       }
-      if (levels.length > 0) await hearLevels($, levels)
+      if (levels.length > 0) hearLevels(levels)
     }
   } catch {
     // The child was stopped or failed; handled below.
@@ -345,7 +341,7 @@ const forgetChildren = () => {
   live.isSpeaking = false
   live.prompts = []
   live.turns.clear()
-  live.levels = []
+  live.level = 0
   stopTicker()
 }
 
@@ -539,8 +535,8 @@ export const register: Register = (on, options) => {
     const palette = liveColors(await read($, colors))
     const { Box, Button, Text } = $.ui.resolve(e)
     const columns = e.props.bodyColumns
-    // A state from before a reload may lack the levels; the next publish fills them.
-    const levels = Array.isArray(now.levels) ? now.levels : []
+    // A state from before a reload may lack the level; the next publish fills it.
+    const level = typeof now.level === 'number' ? now.level : 0
     // The live dot (blank while dark, so nothing shifts) then the mic; muted,
     // a steady muted mic. Both in the dot color: a glyph, as an emoji keeps its own.
     const mic = live.isMuted ? '🔇' : `${now.dot === true ? '●' : ' '}🎙`
@@ -548,7 +544,7 @@ export const register: Register = (on, options) => {
     const stopLabel = '⏹ Stop'
     const width = audioBarWaveWidth(columns, [mic, `m: ${muteLabel}`, `s: ${stopLabel}`, BAR])
     const wave =
-      now.state === 'listening' ? meterRow(levels, width) : now.state === 'speaking' ? waveRow(now.wave ?? 0, width) : flatRow(width)
+      now.state === 'listening' ? bounceRow(now.wave ?? 0, level, width) : now.state === 'speaking' ? waveRow(now.wave ?? 0, width) : flatRow(width)
     // Who is talking: the person, Claude, or nobody (dim).
     const isIdle = now.state !== 'listening' && now.state !== 'speaking'
     const waveColor = now.state === 'listening' ? palette.user : now.state === 'speaking' ? palette.agent : palette.idle

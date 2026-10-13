@@ -80,7 +80,7 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
 ### Live-test feedback (authorized 2026-10-13)
 - [x] T15 Longer end-of-speech silence: default `vadEndSilenceMs` 2000 ms (listen.py, manifest, register,
   README, tests; folds in an uncommitted 800 -> 1500 edit). A 1.5 s pause inside speech no longer splits.
-- [ ] T16 Speaking-style mic animation: the listening wave is a moving wave (like the speaking one) whose
+- [x] T16 Speaking-style mic animation: the listening wave is a moving wave (like the speaking one) whose
   height follows the current smoothed mic level (fast attack, slow decay), not a scrolling history; the
   200-level history leaves `$.state`. Pure `bounceRow(frame, level, width)` + engine test.
 - [ ] T17 `/live config` that always shows: a focused dialog with voice (Kokoro's voice list, static
@@ -282,6 +282,18 @@ Barge-in, global keybindings, cloud providers.
   frames and did not split even at 1500); `claude plugin test .` 59 pass / 1 fail (argv `1500` vs `2000`).
   GREEN: python 16 OK; `claude plugin test .` 60 pass, 0 fail; `claude plugin validate .` passed (expected
   CLAUDE.md warning); tsc no output; `bash -n` ok. Commit: see git log (`feat: wait 2 s of silence ...`).
+- T16 done (route: delegated direct). `hooks/text.ts`: `smoothLevel(shown, level)` (attack 0.6, decay 0.2
+  per level line) and `bounceRow(frame, level, width)` (two beating sines moving a step per frame, height
+  `0.12 + 0.88 * level`: `▁▂` ripple at silence, up to `█` when loud); `meterRow` and `METER_CAP` removed.
+  `$.state` `status.levels` (200-level history) replaced by `status.level` (smoothed, 2 decimals, 0 unless
+  listening). Listener levels no longer redraw on their own: the one band timer (125 ms) moves the wave and
+  publishes while listening or speaking (<= 8 redraws/s), blinks the dot otherwise. Colors and width rules
+  unchanged. README and smoke test describe the new wave.
+  RED: `claude plugin test .` -> text.test.ts failed to load (`bounceRow`/`smoothLevel` missing) and 2 band
+  tests failed (no moving ripple while listening; `status.levels` still in the state). GREEN: 60 pass, 0 fail;
+  python 16 OK; `claude plugin validate .` passed (expected CLAUDE.md warning); tsc no output; `bash -n` ok.
+  Not verified: how the bouncing wave looks with a real mic in a live terminal (smoke test). Commit: see git
+  log (`feat: bounce the listening wave with the microphone level`).
 
 ## Next step
 The human runs `docs/smoke-test.md` with the microphone and reports failed steps. Not verified yet:
