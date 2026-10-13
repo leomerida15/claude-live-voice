@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, HookStream, ProcessSpawnChunk, ProcessSpawnResult, Register } from 'claude-code'
 
 import type { LiveVoiceState, LiveVoiceStatus } from '../types'
-import { SentenceChunker, USAGE, claim, cleanTranscript, parseLiveCommand } from './text.ts'
+import { SentenceChunker, USAGE, claim, cleanTranscript, killPattern, parseLiveCommand, safeSessionId, sessionTag } from './text.ts'
 import type { SubmittedPrompt } from './text.ts'
 
 type $ = EngineInterface
@@ -39,6 +39,8 @@ const config = {
   whisperUrl: 'http://127.0.0.1:2022/v1/audio/transcriptions',
   kokoroUrl: 'http://127.0.0.1:8880/v1/audio/speech',
   scripts: '',
+  // This session's tag, in every child's argv so a kill can find only them.
+  tag: '',
   dir: '',
   pauseFile: '',
 }
@@ -64,8 +66,13 @@ const publish = ($: $) =>
 const writePause = ($: $) =>
   $.fs.write(config.pauseFile, live.isMuted || live.isSpeaking || live.queue.length > 0 ? '1' : '0')
 
-const kill = ($: $, script: string) =>
-  $.process.run(['pkill', '-TERM', '-f', script], { timeoutMs: 5_000 }).catch(() => undefined)
+// Stops this session's children of one script (listen.py or speak.sh): the
+// pattern needs the script name and this session's tag, so other sessions'
+// children never match. The fallback for a child its stream did not stop.
+const kill = ($: $, script: 'listen.py' | 'speak.sh') =>
+  $.process
+    .run(['pkill', '-TERM', '-f', '--', killPattern(script, config.tag)], { timeoutMs: 5_000 })
+    .catch(() => undefined)
 
 const forget = (prompt: SubmittedPrompt) => {
   live.prompts = live.prompts.filter(one => one !== prompt)
@@ -153,7 +160,7 @@ const speakNext = async ($: $) => {
     const sentence = live.queue.shift() ?? ''
     await publish($)
     const player = $.process.spawn({
-      argv: ['bash', `${config.scripts}/speak.sh`, live.voice],
+      argv: ['bash', `${config.scripts}/speak.sh`, '--tag', config.tag, live.voice],
       env: { KOKORO_URL: config.kokoroUrl },
       input: sentence,
     })
@@ -193,7 +200,7 @@ const silence = async ($: $) => {
   live.player = undefined
   if (player !== undefined) {
     void player.return(undefined as never).catch(() => undefined)
-    await kill($, `${config.scripts}/speak.sh`)
+    await kill($, 'speak.sh')
   }
   await publish($)
 }
@@ -205,7 +212,10 @@ const start = async ($: $) => {
   await $.process.run(['mkdir', '-p', config.dir])
   await writePause($)
   const child = $.process.spawn({
-    argv: ['python3', '-I', `${config.scripts}/listen.py`, '--dir', config.dir, '--pause-file', config.pauseFile],
+    argv: [
+      'python3', '-I', `${config.scripts}/listen.py`,
+      '--dir', config.dir, '--pause-file', config.pauseFile, '--tag', config.tag,
+    ],
   })
   live.listener = child
   $.clock.after(0, () => void listen($, child))
@@ -220,7 +230,7 @@ const stop = async ($: $) => {
   live.listener = undefined
   if (listener !== undefined) {
     void listener.return(undefined as never).catch(() => undefined)
-    await kill($, `${config.scripts}/listen.py`)
+    await kill($, 'listen.py')
   }
   await silence($)
 }
@@ -240,7 +250,9 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     const root = $.plugin.root
     config.scripts = (await $.fs.exists(`${root}/scripts/listen.py`)) ? `${root}/scripts` : `${root}/../scripts`
-    config.dir = `${(await $.env.get('XDG_RUNTIME_DIR')) ?? '/tmp'}/live-voice`
+    const sessionId = await $.session.id()
+    config.tag = sessionTag(sessionId)
+    config.dir = `${(await $.env.get('XDG_RUNTIME_DIR')) ?? '/tmp'}/live-voice/${safeSessionId(sessionId)}`
     config.pauseFile = `${config.dir}/paused`
     await update($, status, () => ({ ...OFF, voice: live.voice }))
     await $.command.register({

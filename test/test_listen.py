@@ -35,9 +35,9 @@ def pcm(*parts):
 
 
 class ListenTest(unittest.TestCase):
-    def run_listener(self, audio, pause=None):
+    def run_listener(self, audio, pause=None, extra=()):
         with tempfile.TemporaryDirectory() as tmp:
-            args = [sys.executable, "-I", str(SCRIPT), "--stdin", "--dir", tmp]
+            args = [sys.executable, "-I", str(SCRIPT), "--stdin", "--dir", tmp, *extra]
             if pause is not None:
                 flag = os.path.join(tmp, "paused")
                 pathlib.Path(flag).write_text(pause)
@@ -74,6 +74,28 @@ class ListenTest(unittest.TestCase):
     def test_unpaused_flag_keeps_audio(self):
         paths, _ = self.run_listener(pcm(silence(1.0), tone(1.0), silence(1.5)), pause="0")
         self.assertEqual(len(paths), 1)
+
+    def test_session_tag_is_accepted_and_ignored(self):
+        paths, _ = self.run_listener(pcm(silence(1.0), tone(1.0), silence(1.5)), extra=("--tag", "live-voice-abc"))
+        self.assertEqual(len(paths), 1)
+
+
+class SpeakTest(unittest.TestCase):
+    SPEAK = SCRIPT.parent / "speak.sh"
+
+    def run_speak(self, *args, text="Hola."):
+        env = {"PATH": os.environ.get("PATH", ""), "KOKORO_URL": "http://127.0.0.1:9/unreachable"}
+        return subprocess.run(["bash", str(self.SPEAK), *args], input=text.encode(), capture_output=True, env=env, timeout=30)
+
+    def test_session_tag_is_accepted_before_the_voice(self):
+        done = self.run_speak("--tag", "live-voice-abc", "ef_dora")
+        # Reaches synthesis (exit 1 on the unreachable URL), not a usage error.
+        self.assertEqual(done.returncode, 1)
+        self.assertIn(b"synthesis failed", done.stderr)
+
+    def test_empty_text_still_fails_with_a_tag(self):
+        done = self.run_speak("--tag", "live-voice-abc", "ef_dora", text="  ")
+        self.assertEqual(done.returncode, 2)
 
 
 if __name__ == "__main__":

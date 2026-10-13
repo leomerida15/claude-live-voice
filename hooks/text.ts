@@ -57,6 +57,25 @@ export function claim<P extends SubmittedPrompt>(prompts: readonly P[], turnText
   return prompts.find(prompt => holds(prompt.entered) || holds(prompt.sent)) ?? prompts.find(prompt => prompt.isEntering)
 }
 
+/** A session id safe in a path and in a regex: anything odd becomes `-`. */
+export function safeSessionId(sessionId: string): string {
+  return sessionId.replace(/[^A-Za-z0-9_-]/g, '-')
+}
+
+/** The tag in this session's children's argv: `live-voice-<session id>`. */
+export function sessionTag(sessionId: string): string {
+  return `live-voice-${safeSessionId(sessionId)}`
+}
+
+/**
+ * The `pkill -f` pattern for one script's children of one session: the
+ * script's name, then `--tag <tag>` as a whole word, so neither another
+ * session's children nor a bare script path match.
+ */
+export function killPattern(script: 'listen.py' | 'speak.sh', tag: string): string {
+  return `${script.replace('.', '\\.')} (.* )?--tag ${tag}( |$)`
+}
+
 // Phrases Whisper is known to invent from silence or noise.
 const HALLUCINATIONS = [
   /blank_audio/i,

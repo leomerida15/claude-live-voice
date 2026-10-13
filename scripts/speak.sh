@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # Speak text through a local Kokoro server and play it with paplay.
 #
-# Usage: speak.sh <voice> [text-file]   (text read from stdin when no file)
+# Usage: speak.sh [--tag <tag>] <voice> [text-file]   (text read from stdin when no file)
+# --tag is ignored: it lets the caller find (and stop) this process by its argv.
 # Environment: KOKORO_URL (default http://127.0.0.1:8880/v1/audio/speech).
 # Exits non-zero when the text is empty, synthesis fails or playback fails.
 # SIGTERM stops playback at once and removes the temporary WAV.
 set -u
 
+if [ "${1:-}" = "--tag" ]; then
+  shift 2 || shift $#
+fi
 voice="${1:-ef_dora}"
 url="${KOKORO_URL:-http://127.0.0.1:8880/v1/audio/speech}"
 

@@ -5,7 +5,9 @@ import {
   SentenceChunker,
   claim,
   cleanTranscript,
+  killPattern,
   parseLiveCommand,
+  sessionTag,
   stripMarkdown,
 } from '../hooks/text.ts'
 
@@ -130,5 +132,21 @@ describe('claim', () => {
   test('a turn with unrelated text claims nothing once prompts entered', () => {
     expect(claim([sent('hola', 'hola')], 'something typed')).toBeUndefined()
     expect(claim([], 'hola')).toBeUndefined()
+  })
+})
+
+describe('sessionTag and killPattern', () => {
+  test('the tag names the session, odd characters made safe', () => {
+    expect(sessionTag('ab-12')).toBe('live-voice-ab-12')
+    expect(sessionTag('a b/c.d')).toBe('live-voice-a-b-c-d')
+  })
+
+  test('the pattern matches this session\'s child only', () => {
+    const pattern = new RegExp(killPattern('listen.py', 'live-voice-abc'))
+    expect(pattern.test('python3 -I /p/scripts/listen.py --dir /d --tag live-voice-abc')).toBe(true)
+    expect(pattern.test('python3 -I /p/scripts/listen.py --dir /d --tag live-voice-abcd')).toBe(false)
+    expect(pattern.test('python3 -I /p/scripts/listen.py --dir /d')).toBe(false)
+    expect(pattern.test('bash /p/scripts/speak.sh --tag live-voice-abc ef_dora')).toBe(false)
+    expect(new RegExp(killPattern('speak.sh', 'live-voice-abc')).test('bash /p/scripts/speak.sh --tag live-voice-abc ef_dora')).toBe(true)
   })
 })

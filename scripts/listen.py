@@ -165,6 +165,7 @@ def parse_args(argv):
     parser.add_argument("--pause-file", default=None, help='file whose content "1" pauses listening')
     parser.add_argument("--stdin", action="store_true", help="read raw PCM from stdin instead of arecord")
     parser.add_argument("--device", default=None, help="arecord capture device (-D)")
+    parser.add_argument("--tag", default=None, help="session tag; ignored, it lets the caller find this process")
     return parser.parse_args(argv)
 
 

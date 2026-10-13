@@ -42,7 +42,7 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
 - [x] T5 `CLAUDE.md`: what the mod is, layout, all checks, dev-run, mod API gotchas.
 - [x] T6 Correlate live turns by prompt origin (`prompt.submit` hook sees `origin.kind === 'plugin'`,
   `name === 'live-voice'`), not by matching the raw transcript text. Test-first.
-- [ ] T7 Scope processes per session: a session token in the children's argv, a per-session runtime dir
+- [x] T7 Scope processes per session: a session token in the children's argv, a per-session runtime dir
   and pause flag; stop/silence kill only this session's children (no global `pkill -f <script>`). Test-first.
 - [ ] T8 Hot-reload recovery: on `session.start`, kill this session's orphaned children; if `$.state` says
   live was on, resume the listener (product decision: resume, not switch off). Test-first.
@@ -108,6 +108,20 @@ Barge-in, global keybindings, cloud providers.
   even when another plugin rewrites it" and "queued live prompts merged into one turn", spoken `[]`); GREEN: 26
   pass / 0 fail (with 4 `claim` unit tests). `claude plugin validate .` passed (only the pre-existing CLAUDE.md
   warning); `tsc -p <scratchpad tsconfig>` no errors; python 5 OK; `bash -n scripts/speak.sh` ok.
+  Commit 238755b.
+
+- T7 done (route: delegated direct). Session tag `live-voice-<session id>` (from `$.session.id()` at
+  `session.start`, odd characters made `-`) in every child's argv: `listen.py ... --tag <tag>` (argparse accepts and
+  ignores it) and `speak.sh --tag <tag> <voice>` (optional leading flag, old usage unchanged). Per-session runtime
+  dir `$XDG_RUNTIME_DIR/live-voice/<session id>` holding the pause flag. Stop/silence still `return()` the stream
+  first; the fallback is `pkill -TERM -f -- '<script>\. (.* )?--tag <tag>( |$)'`, never a bare script path.
+  RED: `claude plugin test .` -> 2 fail (argv without `--tag`, pkill pattern without the tag);
+  `python3 -I -m unittest ...` -> 1 error (`--tag` exit 2) + 1 fail (speak.sh took `--tag` as the voice).
+  GREEN: engine 30 pass / 0 fail (incl. `sessionTag`/`killPattern` unit tests); python 8 OK. Real pkill check:
+  two sleepers tagged `live-voice-AAA` and `live-voice-AAAB`, the pattern for AAA killed only AAA.
+  `claude plugin validate .` passed (pre-existing CLAUDE.md warning); tsc no errors; `bash -n` ok.
+  Not covered: children started before a `/clear` (new session id, no `session.start`) keep the old tag, which the
+  module still holds until a reload.
 
 ## Next step
 Manual acceptance in an interactive session: `claude --plugin-dir <repo>`, `/live`, speak a question.
