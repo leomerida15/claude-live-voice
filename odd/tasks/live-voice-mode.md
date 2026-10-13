@@ -35,7 +35,7 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
 ## Tasks
 - [x] T1 Scaffold: plugin.json, hooks.json, marketplace.json, README, .gitignore.
 - [x] T2 Audio helpers: `scripts/listen.py` (VAD recorder), `scripts/speak.sh` (Kokoro -> paplay).
-- [ ] T3 Mod module `hooks/register.tsx` + state contract `types/index.d.ts`.
+- [x] T3 Mod module `hooks/register.tsx` + state contract `types/index.d.ts`.
 - [ ] T4 Tests (`*.test.ts`) and checks: `claude plugin validate`, `tsc -p`, `claude plugin test`.
 
 ## Acceptance criteria
@@ -61,5 +61,13 @@ ask-on-risk. Forecast ~600 authored lines.
   -> one WAV (2.19 s) -> Whisper `" o la clau de que hora es en Madrid."` (same text as posting the Kokoro WAV
   directly, so the VAD does not clip; the gap is Whisper model quality).
 
+- T3 done (route: delegated direct). Commit aed8338. Pure helpers in `hooks/text.ts` (command parsing,
+  transcript filter, markdown stripping, sentence chunker with code-block skip). RED: `claude plugin test .` ->
+  "the file did not load: Export named 'CODE_OMITTED' not found" (stub module); GREEN: 14 pass, 0 fail.
+  `claude plugin validate .` passed (hooks: session.start, session.end, command.run{command=live}, turn.start,
+  turn.step, turn.complete, ui.render{component=AbovePrompt}). Type-check with the d.ts header tsconfig kept in
+  /tmp/claude-1000/live-voice-tsc: no errors. Validator rule learned: `$` may only be passed to functions declared
+  at the top level of the module, so all `$`-taking helpers live at module scope.
+
 ## Next step
-T3.
+T4.
