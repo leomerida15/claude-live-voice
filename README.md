@@ -157,6 +157,12 @@ positive number falls back to its default.
   sentence early or start a false one. The detector calibrates to the room's
   noise during the first half second, so start live mode in a quiet moment.
 - **Linux only.** Recording and playback use ALSA and PulseAudio tools.
+- **Kokoro restarts.** VoiceMode's Kokoro service restarts itself every 25
+  requests (`UVICORN_LIMIT_MAX_REQUESTS=25` in its systemd unit) and is gone
+  for about 30 s each time. `speak.sh` keeps trying for up to 40 s
+  (`KOKORO_RETRY_S`), so a reply pauses there instead of losing sentences.
+  When a sentence still fails, the toast carries `speak.sh`'s reason (curl's
+  error, Kokoro's HTTP status and answer, or paplay's message).
 
 ## Development
 

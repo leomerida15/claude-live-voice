@@ -145,22 +145,139 @@ class TunablesTest(unittest.TestCase):
                 self.assertEqual(done.returncode, 2)
 
 
+class FakeKokoro:
+    """A local HTTP server standing in for Kokoro: answers each POST with (status, body)."""
+
+    def __init__(self, status=200, body=b"RIFF fake wav", port=None):
+        import http.server
+        import threading
+
+        outer = self
+        self.requests = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", 0))
+                outer.requests.append(self.rfile.read(length))
+                self.send_response(status)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", port or 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_address[1]}/v1/audio/speech"
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def free_port():
+    import socket
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
 class SpeakTest(unittest.TestCase):
     SPEAK = SCRIPT.parent / "speak.sh"
 
-    def run_speak(self, *args, text="Hola."):
-        env = {"PATH": os.environ.get("PATH", ""), "KOKORO_URL": "http://127.0.0.1:9/unreachable"}
-        return subprocess.run(["bash", str(self.SPEAK), *args], input=text.encode(), capture_output=True, env=env, timeout=30)
+    def setUp(self):
+        # A fake paplay first on PATH: tests never play sound. It fails when the WAV holds "FAIL".
+        self.bin = tempfile.TemporaryDirectory()
+        self.addCleanup(self.bin.cleanup)
+        paplay = pathlib.Path(self.bin.name) / "paplay"
+        paplay.write_text(
+            "#!/bin/sh\n"
+            'if grep -q FAIL "$1"; then echo "Failed to open audio file." >&2; exit 1; fi\n'
+            "exit 0\n"
+        )
+        paplay.chmod(0o755)
+
+    def run_speak(self, *args, text="Hola.", url="http://127.0.0.1:9/unreachable", env=None):
+        full = {
+            "PATH": f"{self.bin.name}:{os.environ.get('PATH', '')}",
+            "KOKORO_URL": url,
+            "KOKORO_RETRY_S": "0",
+            **(env or {}),
+        }
+        return subprocess.run(["bash", str(self.SPEAK), *args], input=text.encode(), capture_output=True, env=full, timeout=60)
 
     def test_session_tag_is_accepted_before_the_voice(self):
         done = self.run_speak("--tag", "live-voice-abc", "ef_dora")
         # Reaches synthesis (exit 1 on the unreachable URL), not a usage error.
         self.assertEqual(done.returncode, 1)
-        self.assertIn(b"synthesis failed", done.stderr)
+        self.assertIn(b"Kokoro is not answering", done.stderr)
 
     def test_empty_text_still_fails_with_a_tag(self):
         done = self.run_speak("--tag", "live-voice-abc", "ef_dora", text="  ")
         self.assertEqual(done.returncode, 2)
+
+    def test_speaks_through_kokoro(self):
+        kokoro = FakeKokoro()
+        self.addCleanup(kokoro.close)
+        done = self.run_speak("ef_dora", url=kokoro.url)
+        self.assertEqual((done.returncode, done.stderr), (0, b""))
+        self.assertEqual(len(kokoro.requests), 1)
+
+    def test_an_http_error_names_the_status_and_the_body(self):
+        kokoro = FakeKokoro(status=400, body=b'{"detail": "voice not found"}')
+        self.addCleanup(kokoro.close)
+        done = self.run_speak("xx_nobody", url=kokoro.url)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn(b"HTTP 400", done.stderr)
+        self.assertIn(b"voice not found", done.stderr)
+        self.assertEqual(len(done.stderr.decode().strip().splitlines()), 1)
+
+    def test_no_audio_is_an_error(self):
+        kokoro = FakeKokoro(body=b"")
+        self.addCleanup(kokoro.close)
+        done = self.run_speak("ef_dora", url=kokoro.url)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn(b"no audio", done.stderr)
+
+    def test_a_playback_failure_says_why(self):
+        kokoro = FakeKokoro(body=b"FAIL")
+        self.addCleanup(kokoro.close)
+        done = self.run_speak("ef_dora", url=kokoro.url)
+        self.assertEqual(done.returncode, 1)
+        self.assertIn(b"playback failed: Failed to open audio file.", done.stderr)
+
+    def test_a_missing_temporary_directory_is_named(self):
+        done = self.run_speak("ef_dora", env={"TMPDIR": "/nonexistent/live-voice"})
+        self.assertEqual(done.returncode, 1)
+        self.assertIn(b"temporary file", done.stderr)
+        self.assertIn(b"/nonexistent/live-voice", done.stderr)
+
+    def test_text_with_nothing_to_say_is_skipped(self):
+        kokoro = FakeKokoro(body=b"")
+        self.addCleanup(kokoro.close)
+        for text in (".", "...", " - ", "**"):
+            with self.subTest(text=text):
+                done = self.run_speak("ef_dora", url=kokoro.url, text=text)
+                self.assertEqual((done.returncode, done.stderr), (0, b""))
+        self.assertEqual(kokoro.requests, [])
+
+    def test_waits_for_kokoro_while_it_restarts(self):
+        # Kokoro restarts after a number of requests (uvicorn --limit-max-requests):
+        # its port refuses connections for a while, then it answers again.
+        import threading
+
+        port = free_port()
+        servers = []
+        starter = threading.Timer(1.5, lambda: servers.append(FakeKokoro(port=port)))
+        starter.start()
+        self.addCleanup(lambda: [server.close() for server in servers])
+        done = self.run_speak("ef_dora", url=f"http://127.0.0.1:{port}/v1/audio/speech", env={"KOKORO_RETRY_S": "10"})
+        starter.join()
+        self.assertEqual((done.returncode, done.stderr), (0, b""))
+        self.assertEqual(len(servers[0].requests), 1)
 
 
 if __name__ == "__main__":

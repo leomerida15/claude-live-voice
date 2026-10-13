@@ -284,12 +284,19 @@ const speakNext = async ($: $) => {
     })
     live.player = player
     try {
-      for await (const _ of player) {
-        // speak.sh prints only errors; drain them.
+      // speak.sh prints only errors: keep them to say why a sentence failed.
+      let errors = ''
+      for await (const chunk of player) {
+        if (chunk.stream === 'stderr' && errors.length < 2_000) errors += chunk.text
       }
       const ended = await player.result
       if (ended.code !== 0 && ended.signal === null && live.isOn) {
-        $.ui.toast(`live-voice: speech failed (is Kokoro running at ${config.kokoroUrl}?)`)
+        const why = errors.split('\n').map(line => line.trim()).find(line => line !== '')
+        $.ui.toast(
+          why === undefined
+            ? `live-voice: speech failed (is Kokoro running at ${config.kokoroUrl}?)`
+            : `live-voice: speech failed: ${why}`,
+        )
       }
     } catch {
       // Stopped mid-sentence.

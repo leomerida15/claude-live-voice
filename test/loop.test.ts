@@ -96,3 +96,32 @@ test('the pause after playback follows the echoTailMs setting', { ...SLOW, optio
   expect((await $.command.run(live('status'))).text).toMatch(/: listening/)
   await $.command.run(live('off'))
 })
+
+test('a failed sentence toasts the first line speak.sh printed', SLOW, async ($, on) => {
+  const world = fakeWorld(on, 'hola')
+  world.speech.code = 1
+  world.speech.stderr = 'speak.sh: Kokoro answered HTTP 500: {"detail": "boom"}\nmore detail\n'
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+  await $.command.run(live('on'))
+  await settle(world)
+  world.hear('/run/user/1000/live-voice/utt-1.wav')
+  await settle(world)
+  await turn($, world, 't1', 'hola', 'Hola.')
+  await settle(world)
+  expect(world.toasts).toContain('live-voice: speech failed: speak.sh: Kokoro answered HTTP 500: {"detail": "boom"}')
+  await $.command.run(live('off'))
+})
+
+test('a failed sentence with nothing on stderr still names Kokoro', SLOW, async ($, on) => {
+  const world = fakeWorld(on, 'hola')
+  world.speech.code = 1
+  await $.session.start({ cwd: '/work', surface: 'terminal', isInteractive: true })
+  await $.command.run(live('on'))
+  await settle(world)
+  world.hear('/run/user/1000/live-voice/utt-1.wav')
+  await settle(world)
+  await turn($, world, 't1', 'hola', 'Hola.')
+  await settle(world)
+  expect(world.toasts.some(toast => toast.startsWith('live-voice: speech failed') && toast.includes('Kokoro'))).toBe(true)
+  await $.command.run(live('off'))
+})

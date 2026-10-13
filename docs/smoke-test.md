@@ -88,7 +88,9 @@ Mark each step pass or fail and note what you heard or saw on a failure.
 
 - [ ] `/live off`: the band disappears; `pgrep -af 'listen.py|speak.sh'` prints nothing for this session.
 - [ ] Stop Whisper, `/live on`, speak: a toast says Whisper is not answering; the loop keeps listening.
-- [ ] Stop Kokoro, ask by voice: a toast says speech failed; the band returns to `listening`.
+- [ ] Stop Kokoro, ask by voice: the band stays `speaking` while speak.sh waits for Kokoro (about 40 s),
+  then a toast says `speech failed: speak.sh: Kokoro is not answering at ...` with curl's reason; the band
+  returns to `listening`. Start Kokoro again within the wait instead: the sentence is spoken late.
 - [ ] Quit Claude Code with live on: no `listen.py`, `arecord` or `paplay` is left running.
 
 ## Report

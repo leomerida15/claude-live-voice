@@ -87,7 +87,7 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
   fallback), the four colors, animation (`wave|bars|off`) and end-of-speech silence (1000-3000 ms,
   restarts the listener); persisted in `$.store`; text summary answer when the pane is not placed;
   shortcuts `voice|<target>|animation|silence|reset`; `/live` hint mentions config.
-- [ ] T18 Surface speak.sh failures: its stderr's first line in the toast; specific speak.sh errors
+- [x] T18 Surface speak.sh failures: its stderr's first line in the toast; specific speak.sh errors
   (HTTP status and body, mktemp, paplay); reproduce the ~35 ms exit-1 failures and fix a deterministic cause.
 
 ## Acceptance criteria
@@ -316,6 +316,30 @@ Barge-in, global keybindings, cloud providers.
   tsc no output; `bash -n` ok. Not verified: the dialog's placement, focus, Esc and Close in a live
   terminal; Kokoro's real voice list in the dialog (the endpoint answers `{"voices": [...]}`, checked
   by curl). Commit: see git log (`feat: configure voice, animation and silence from /live config`).
+- T18 done (route: delegated direct). Reproduction: the ~35 ms exit-1 runs are Kokoro restarting, not the
+  text. VoiceMode's unit sets `UVICORN_LIMIT_MAX_REQUESTS=25` and `RestartSec=10`: after its 25th request
+  Kokoro logs "Maximum request limit of 25 exceeded. Terminating process." and refuses connections until
+  it is back (about 30-38 s), so `curl -sf` failed at once (connection refused). The failure bursts in the
+  debug logs (21:22:28-50 and 21:39:39-21:40:03 UTC) fall inside the journal's outages (limit at 17:22:26
+  and 17:39:38 local, back at 17:22:59 and 17:40:16). The chunker's kinds of sentences (short, `.`,
+  markdown leftovers, emoji, long text) all synthesize against the live Kokoro; only `.` gets HTTP 200 with
+  an empty body (the chunker never sends it). TMPDIR is not a cause (unset here; a missing one now says so).
+  Fix: `speak.sh` retries refused connections for `KOKORO_RETRY_S` (default 40 s, curl `--retry
+  --retry-connrefused --retry-delay 2 --retry-max-time`); live check: 30 sentences in a row against the
+  real Kokoro (silent fake paplay) crossed its limit, sentence 21 waited 36 s and was spoken, none failed.
+  Errors are one specific stderr line: `Kokoro is not answering at <url>: <curl error>`, `Kokoro answered
+  HTTP <code>: <body>`, `Kokoro returned no audio`, `cannot create a temporary file in <dir>`, `playback
+  failed: <paplay message>`; text with no letter or digit is skipped (exit 0, no request). The mod keeps
+  each speak.sh's stderr and toasts `live-voice: speech failed: <first line>` (the old Kokoro hint when
+  stderr is empty).
+  RED: python 23 tests -> 7 fail (messages, skip, restart wait; fake Kokoro HTTP server on localhost and a
+  fake `paplay` on PATH, so no test plays sound); `claude plugin test .` 73 pass / 1 fail (toast without the
+  stderr line). GREEN: python 23 OK; engine 74 pass, 0 fail; `claude plugin validate .` passed (expected
+  CLAUDE.md warning); tsc no output; `bash -n` ok; SIGTERM mid-playback still exits 143 in 3 ms with no temp
+  files left. Not changed (the user's service, outside the repo): the Kokoro unit's request limit; removing
+  `UVICORN_LIMIT_MAX_REQUESTS` (or lowering `RestartSec`) would avoid the pauses. Side effect of the
+  reproduction: the live Kokoro restarted twice on its own limit. Commit: see git log
+  (`fix: wait for Kokoro to restart and say why speech failed`).
 
 ## Next step
 The human runs `docs/smoke-test.md` with the microphone and reports failed steps. Not verified yet:

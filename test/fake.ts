@@ -36,6 +36,10 @@ export type World = {
   opened: string[]
   /** Whether `$.ui.open` places the pane (false: it waits undrawn, as on a narrow terminal). */
   panes: { isPlaced: boolean }
+  /** How speak.sh children end: their exit code and what they print on stderr. */
+  speech: { code: number; stderr: string }
+  /** Every toast the plugin raised, oldest first. */
+  toasts: string[]
   /** The voices Kokoro's `/v1/audio/voices` lists; undefined: Kokoro is not answering. */
   voices: { list: string[] | undefined }
 }
@@ -82,6 +86,8 @@ export function fakeWorld(on: On, transcript = 'hola mundo'): World {
     store: new Map(),
     opened: [],
     panes: { isPlaced: true },
+    speech: { code: 0, stderr: '' },
+    toasts: [],
     voices: { list: ['af_heart', 'bm_george', 'em_alex', 'ef_dora', 'em_santa'] },
   }
   on('state.set', (_$, e, next) => {
@@ -104,6 +110,11 @@ export function fakeWorld(on: On, transcript = 'hola mundo'): World {
   on('store.get', (_$, e) => ({ value: world.store.get(e.key) }))
   on('store.set', (_$, e) => {
     world.store.set(e.key, JSON.parse(JSON.stringify(e.value)))
+
+    return { value: undefined }
+  })
+  on('ui.toast', (_$, e) => {
+    world.toasts.push(e.text)
 
     return { value: undefined }
   })
@@ -142,11 +153,13 @@ export function fakeWorld(on: On, transcript = 'hola mundo'): World {
         yield { stream: 'stdout' as const, text: `${wav}\n` }
       }
     }
-    if (world.playback.hold && e.argv.some(arg => arg.endsWith('speak.sh'))) {
+    const isSpeak = e.argv.some(arg => arg.endsWith('speak.sh'))
+    if (world.playback.hold && isSpeak) {
       await new Promise<void>(resolve => releases.push(resolve))
     }
+    if (isSpeak && world.speech.stderr !== '') yield { stream: 'stderr' as const, text: world.speech.stderr }
 
-    return { value: { code: 0, signal: null } }
+    return { value: { code: isSpeak ? world.speech.code : 0, signal: null } }
   })
   on('prompt.submit', (_$, e) => {
     world.prompts.push(e)
