@@ -123,7 +123,7 @@ Set these in `/config` or in `pluginConfigs["live-voice"].options` in
 | `whisperUrl` | `http://127.0.0.1:2022/v1/audio/transcriptions` |
 | `kokoroUrl` | `http://127.0.0.1:8880/v1/audio/speech` |
 | `echoTailMs` | `350`: pause after a reply is spoken before listening again |
-| `vadEndSilenceMs` | `800`: silence that ends an utterance |
+| `vadEndSilenceMs` | `2000`: silence that ends an utterance, so a pause to think does not cut a sentence |
 | `vadStartFrames` | `3`: loud 30 ms frames in a row that start an utterance |
 | `vadThresholdFactor` | `3`: how many times louder than the room's noise speech must be |
 

@@ -102,6 +102,6 @@ test('the listener gets the default VAD tunables when none are set', SLOW, async
   await $.command.run(live('on'))
   await settle(world)
   const argv = listeners(world)[0]?.argv ?? []
-  expect(argv).toEqual(expect.arrayContaining(['--end-silence-ms', '800', '--start-frames', '3', '--threshold-factor', '3']))
+  expect(argv).toEqual(expect.arrayContaining(['--end-silence-ms', '2000', '--start-frames', '3', '--threshold-factor', '3']))
   await $.command.run(live('off'))
 })

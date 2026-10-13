@@ -61,7 +61,7 @@ class ListenTest(unittest.TestCase):
         self.assertLess(seconds, 2.0)
 
     def test_two_utterances_print_two_paths(self):
-        paths, _ = self.run_listener(pcm(silence(1.0), tone(0.6), silence(1.2), tone(0.6), silence(1.2)))
+        paths, _ = self.run_listener(pcm(silence(1.0), tone(0.6), silence(2.6), tone(0.6), silence(2.6)))
         self.assertEqual(len(paths), 2)
 
     def test_short_blip_is_ignored(self):
@@ -113,10 +113,16 @@ class TunablesTest(unittest.TestCase):
     run_listener = ListenTest.run_listener
 
     def test_shorter_end_silence_splits_what_the_default_joins(self):
-        audio = pcm(silence(1.0), tone(0.6), silence(0.5), tone(0.6), silence(1.5))
+        audio = pcm(silence(1.0), tone(0.6), silence(0.5), tone(0.6), silence(2.6))
         joined, _ = self.run_listener(audio)
         split, _ = self.run_listener(audio, extra=("--end-silence-ms", "300"))
         self.assertEqual((len(joined), len(split)), (1, 2))
+
+    def test_a_long_pause_inside_speech_does_not_split_by_default(self):
+        # A 1.7 s pause to think mid-sentence stays one utterance (default end silence 2 s;
+        # the old 1.5 s default cut it in two).
+        paths, _ = self.run_listener(pcm(silence(1.0), tone(0.6), silence(1.7), tone(0.6), silence(2.6)))
+        self.assertEqual(len(paths), 1)
 
     def test_more_start_frames_ignore_a_short_burst(self):
         audio = pcm(silence(1.0), tone(0.4), silence(1.5))

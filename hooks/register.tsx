@@ -88,7 +88,7 @@ const config = {
   echoTailMs: 350,
   // listen.py's VAD: silence that ends an utterance, loud frames that start
   // one, and how far over the noise floor speech must be.
-  vadEndSilenceMs: 800,
+  vadEndSilenceMs: 2000,
   vadStartFrames: 3,
   vadThresholdFactor: 3,
   scripts: '',

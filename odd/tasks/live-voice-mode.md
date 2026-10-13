@@ -77,6 +77,19 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
   `/live config <user|agent|dot|idle> <color>` sets one; `/live config reset` restores defaults; bad input
   answers the usage with the valid values. Parser in `hooks/text.ts` with unit tests; engine tests.
 
+### Live-test feedback (authorized 2026-10-13)
+- [x] T15 Longer end-of-speech silence: default `vadEndSilenceMs` 2000 ms (listen.py, manifest, register,
+  README, tests; folds in an uncommitted 800 -> 1500 edit). A 1.5 s pause inside speech no longer splits.
+- [ ] T16 Speaking-style mic animation: the listening wave is a moving wave (like the speaking one) whose
+  height follows the current smoothed mic level (fast attack, slow decay), not a scrolling history; the
+  200-level history leaves `$.state`. Pure `bounceRow(frame, level, width)` + engine test.
+- [ ] T17 `/live config` that always shows: a focused dialog with voice (Kokoro's voice list, static
+  fallback), the four colors, animation (`wave|bars|off`) and end-of-speech silence (1000-3000 ms,
+  restarts the listener); persisted in `$.store`; text summary answer when the pane is not placed;
+  shortcuts `voice|<target>|animation|silence|reset`; `/live` hint mentions config.
+- [ ] T18 Surface speak.sh failures: its stderr's first line in the toast; specific speak.sh errors
+  (HTTP status and body, mktemp, paplay); reproduce the ~35 ms exit-1 failures and fix a deterministic cause.
+
 ## Acceptance criteria
 - `claude plugin validate .` passes; type-check passes; `claude plugin test .` passes.
 - Helpers run standalone (listen.py prints a WAV path per utterance; speak.sh plays text).
@@ -91,6 +104,8 @@ ask-on-risk. Forecast ~600 authored lines.
   T10: inline (one doc file). T12: delegated direct (writer trigger: listen.py, register.tsx, text.ts, tests).
   T13: delegated direct (writer trigger: register.tsx, text.ts, types, tests).
   T14: delegated direct (writer trigger: register.tsx, text.ts, types, tests).
+  T15–T18: delegated direct (one bounded writer; writer trigger: listen.py, speak.sh, register.tsx,
+  text.ts, types, tests, docs).
 
 ## Out of scope (hardening)
 Barge-in, global keybindings, cloud providers.
@@ -258,6 +273,15 @@ Barge-in, global keybindings, cloud providers.
   fake store), the pane's four Selects, a pick persisting, and Restore. Not covered: the pane's placement
   and focus, Escape closing it, pressing Close (only its presence), real persistence across a restart.
   Commit: this commit.
+
+- T15 done (route: delegated direct). Default end-of-speech silence 2000 ms in `listen.py`
+  (`END_SILENCE_MS`), the manifest's `vadEndSilenceMs` default, `register.tsx` and the README table; folds in
+  the uncommitted 800 -> 1500 edit of an earlier session. Test pauses moved to 2.6 s where two utterances are
+  meant. RED (with 1500): python 16 tests -> 1 fail (`test_a_long_pause_inside_speech_does_not_split_by_default`,
+  2 != 1; the pause is 1.7 s because a tone edge shares a 30 ms frame, so a 1.5 s pause counted 49 silent
+  frames and did not split even at 1500); `claude plugin test .` 59 pass / 1 fail (argv `1500` vs `2000`).
+  GREEN: python 16 OK; `claude plugin test .` 60 pass, 0 fail; `claude plugin validate .` passed (expected
+  CLAUDE.md warning); tsc no output; `bash -n` ok. Commit: see git log (`feat: wait 2 s of silence ...`).
 
 ## Next step
 The human runs `docs/smoke-test.md` with the microphone and reports failed steps. Not verified yet:

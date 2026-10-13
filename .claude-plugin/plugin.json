@@ -40,8 +40,8 @@
     "vadEndSilenceMs": {
       "type": "number",
       "title": "End of speech silence (ms)",
-      "description": "Silence that ends an utterance.",
-      "default": 800
+      "description": "Silence that ends an utterance; raise it if pauses cut sentences in two.",
+      "default": 2000
     },
     "vadStartFrames": {
       "type": "number",
