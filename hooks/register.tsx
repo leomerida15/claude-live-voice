@@ -1,7 +1,16 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, HookStream, ProcessSpawnChunk, ProcessSpawnResult, Register, Timer } from 'claude-code'
 
-import type { LiveVoiceAnimation, LiveVoiceColor, LiveVoiceColors, LiveVoiceEditor, LiveVoiceSettings, LiveVoiceState, LiveVoiceStatus } from '../types'
+import type {
+  LiveVoiceAnimation,
+  LiveVoiceColor,
+  LiveVoiceColors,
+  LiveVoiceEditor,
+  LiveVoiceInterrupt,
+  LiveVoiceSettings,
+  LiveVoiceState,
+  LiveVoiceStatus,
+} from '../types'
 import {
   ANIMATIONS,
   CHORD_ACTIONS,
@@ -11,12 +20,14 @@ import {
   DEFAULT_CHORDS,
   DEFAULT_COLORS,
   FALLBACK_VOICES,
+  INTERRUPTS,
   SILENCES,
   SUGGESTED_CHORDS,
   SentenceChunker,
   THEME_COLORS,
   USAGE,
   applyChords,
+  bargeFlags,
   claim,
   audioBarWaveWidth,
   barsRow,
@@ -39,6 +50,7 @@ import {
   readChords,
   parseLiveCommand,
   packRows,
+  pauseMode,
   safeSessionId,
   sampleText,
   selectOptions,
@@ -63,7 +75,7 @@ type Child = HookStream<ProcessSpawnChunk, ProcessSpawnResult>
 const OFF: LiveVoiceStatus = { isOn: false, state: 'off', queue: 0, voice: '', level: 0, wave: 0, dot: false }
 const status = atom({ plugin: 'live-voice', key: 'status' } as const, OFF)
 const colors = atom({ plugin: 'live-voice', key: 'colors' } as const, DEFAULT_COLORS)
-const SETTINGS: LiveVoiceSettings = { voice: 'ef_dora', animation: 'wave', silenceMs: 2000 }
+const SETTINGS: LiveVoiceSettings = { voice: 'ef_dora', animation: 'wave', silenceMs: 2000, interrupt: 'speakers' }
 const settings = atom({ plugin: 'live-voice', key: 'settings' } as const, SETTINGS)
 // The dialog's color editor: the color it changes and the channel step.
 const COARSE = 16
@@ -89,7 +101,7 @@ const CHANNELS = [
   { key: 'blue', label: 'B', color: '#0000ff', down: 'z', up: 'x' },
 ] as const
 // The `$.store` keys of the settings kept beside `colors`.
-const STORED = ['voice', 'animation', 'silenceMs'] as const
+const STORED = ['voice', 'animation', 'silenceMs', 'interrupt'] as const
 
 const STT_TIMEOUT_MS = 60_000
 // The band's clock while live voice is on: the wave moves one frame a tick
@@ -111,6 +123,12 @@ const live = {
   tester: undefined as Child | undefined,
   queue: [] as string[],
   isSpeaking: false,
+  // The echo tail after a reply: the mic stays paused whatever `interrupt` says.
+  isHeld: false,
+  // The person spoke over the reply: it was cut, and no echo tail follows.
+  isBarged: false,
+  // How speaking over a reply interrupts it (also in the `settings` state).
+  interrupt: 'speakers' as LiveVoiceInterrupt,
   // Transcripts this plugin submitted, not yet claimed by a turn.start.
   prompts: [] as SubmittedPrompt[],
   // Live turns by id, each with the chunker of its spoken reply.
@@ -160,7 +178,7 @@ const defaults = { voice: 'ef_dora', silenceMs: 2000 }
 
 const stateNow = (): LiveVoiceState => {
   if (!live.isOn) return 'off'
-  if (live.isSpeaking || live.queue.length > 0) return 'speaking'
+  if ((live.isSpeaking && !live.isBarged) || live.queue.length > 0) return 'speaking'
   if (live.isMuted) return 'muted'
   if (live.isTranscribing) return 'transcribing'
   if (live.prompts.length > 0 || live.turns.size > 0) return 'thinking'
@@ -230,12 +248,18 @@ const stopTicker = () => {
   live.ticker = undefined
 }
 
-// The listener discards audio while the flag file holds "1": muted, or
-// while a reply or a voice sample plays.
+// The listener's mode (see pauseMode): "1" discards audio (muted, a voice
+// sample, the echo tail, a reply with interrupt off), "2" listens for a
+// barge-in while a reply plays, "0" listens.
 const writePause = ($: $) =>
   $.fs.write(
     config.pauseFile,
-    live.isMuted || live.isSpeaking || live.queue.length > 0 || live.tester !== undefined ? '1' : '0',
+    pauseMode({
+      isMuted: live.isMuted,
+      isSpeaking: live.isSpeaking || live.queue.length > 0,
+      isHeld: live.isHeld || live.tester !== undefined,
+      interrupt: live.interrupt,
+    }),
   )
 
 // Stops this session's children of one script (listen.py or speak.sh): the
@@ -311,6 +335,8 @@ const listen = async ($: $, child: Child) => {
         pending = pending.slice(newline + 1)
         if (line?.kind === 'level') {
           levels.push(line.value)
+        } else if (line?.kind === 'barge') {
+          await bargeIn($)
         } else if (line?.kind === 'wav') {
           await transcribe($, line.path)
           levels = []
@@ -373,8 +399,16 @@ const speakNext = async ($: $) => {
     }
     live.player = undefined
   }
-  await $.clock.sleep(config.echoTailMs).catch(() => undefined)
+  // The room's echo of the last sentence is not speech; after a barge-in the
+  // person is already talking, so no tail.
+  if (!live.isBarged) {
+    live.isHeld = true
+    if (live.isOn) await writePause($)
+    await $.clock.sleep(config.echoTailMs).catch(() => undefined)
+  }
+  live.isHeld = false
   live.isSpeaking = false
+  live.isBarged = false
   if (live.isOn) await writePause($)
   await publish($)
 }
@@ -396,6 +430,26 @@ const silence = async ($: $) => {
   live.tester = undefined
   for (const player of players) void player.return(undefined as never).catch(() => undefined)
   if (players.length > 0) await kill($, 'speak.sh')
+  await publish($)
+}
+
+// The person spoke over a reply (listen.py's `barge`, only while it listens
+// in mode "2"): the voice is cut and its queue dropped, and the live turn
+// still running is aborted, as Esc would. What they said follows as a WAV and
+// is submitted as the next live prompt. Muted, interrupt off, or nothing being
+// spoken: ignored. Typed turns are never in `live.turns`, so never aborted.
+const bargeIn = async ($: $) => {
+  if (!live.isOn || live.isMuted || live.interrupt === 'off') return
+  if (!live.isSpeaking && live.queue.length === 0) return
+  live.isBarged = true
+  // Forgotten first, so the rest of their streamed reply is not queued again.
+  const running = [...live.turns.keys()]
+  live.turns.clear()
+  await silence($)
+  for (const turnId of running) {
+    // Rejects when the turn already ended: nothing left to abort.
+    await $.turn.abort({ turnId }).catch(() => undefined)
+  }
   await publish($)
 }
 
@@ -439,6 +493,13 @@ const testVoice = async ($: $) => {
   return `Testing voice ${voiceLabel(live.voice)}.`
 }
 
+// listen.py's barge-in start for the current `interrupt` setting.
+const listenerBargeFlags = () => {
+  const flags = bargeFlags(live.interrupt, config.vadThresholdFactor, config.vadStartFrames)
+
+  return ['--barge-ratio', String(flags.ratio), '--barge-frames', String(flags.frames)]
+}
+
 // Starts listen.py with the current VAD settings and reads it.
 const spawnListener = ($: $) => {
   const child = $.process.spawn({
@@ -448,6 +509,7 @@ const spawnListener = ($: $) => {
       '--end-silence-ms', String(config.vadEndSilenceMs),
       '--start-frames', String(config.vadStartFrames),
       '--threshold-factor', String(config.vadThresholdFactor),
+      ...listenerBargeFlags(),
     ],
   })
   live.listener = child
@@ -490,6 +552,8 @@ const forgetChildren = () => {
   live.tester = undefined
   live.queue = []
   live.isSpeaking = false
+  live.isHeld = false
+  live.isBarged = false
   live.prompts = []
   live.turns.clear()
   live.level = 0
@@ -555,7 +619,7 @@ const keep = async ($: $, key: (typeof STORED)[number], value: unknown) =>
 
 // Shows the settings as they are now, to the band and the dialog.
 const showSettings = ($: $) =>
-  update($, settings, () => ({ voice: live.voice, animation: live.animation, silenceMs: config.vadEndSilenceMs }))
+  update($, settings, () => ({ voice: live.voice, animation: live.animation, silenceMs: config.vadEndSilenceMs, interrupt: live.interrupt }))
 
 const setVoice = async ($: $, voice: string) => {
   live.voice = voice
@@ -580,12 +644,26 @@ const setSilence = async ($: $, silenceMs: number) => {
   if (isNew) await restartListener($)
 }
 
+// A new interrupt mode takes at once: the pause file now, and the listener
+// restarted when its barge-in start changed.
+const setInterrupt = async ($: $, interrupt: LiveVoiceInterrupt) => {
+  const before = listenerBargeFlags().join(' ')
+  live.interrupt = interrupt
+  await showSettings($)
+  await keep($, 'interrupt', interrupt)
+  if (live.isOn) await writePause($)
+  if (listenerBargeFlags().join(' ') !== before) await restartListener($)
+}
+
 // Back to the plugin's settings and the default colors; nothing kept.
 const resetSettings = async ($: $) => {
   await setColors($, DEFAULT_COLORS)
   live.voice = defaults.voice
   live.animation = 'wave'
-  const isNew = config.vadEndSilenceMs !== defaults.silenceMs
+  const bargeBefore = listenerBargeFlags().join(' ')
+  live.interrupt = SETTINGS.interrupt
+  if (live.isOn) await writePause($)
+  const isNew = config.vadEndSilenceMs !== defaults.silenceMs || listenerBargeFlags().join(' ') !== bargeBefore
   config.vadEndSilenceMs = defaults.silenceMs
   await showSettings($)
   await Promise.all(STORED.map(key => $.store.delete(key).catch(() => undefined)))
@@ -617,6 +695,7 @@ const summary = async ($: $) => {
     `  voice      ${voiceLabel(live.voice)}`,
     `  animation  ${live.animation}`,
     `  silence    ${config.vadEndSilenceMs} ms`,
+    `  interrupt  ${live.interrupt}`,
     `  colors     ${COLOR_TARGETS.map(target => `${target} ${now[target]}`).join(' · ')}`,
     'Change one with /live config voice <name>, or:',
     CONFIG_USAGE,
@@ -754,6 +833,9 @@ const answerLive = async ($: $, args: string) => {
     case 'config-silence':
       await setSilence($, command.silenceMs)
       return { text: `End-of-speech silence set to ${command.silenceMs} ms.` }
+    case 'config-interrupt':
+      await setInterrupt($, command.interrupt)
+      return { text: `Interrupt set to ${command.interrupt}.` }
     case 'config-set':
       await pickColor($, command.target, command.color)
       return { text: `${command.target} color set to ${command.color}.` }
@@ -790,23 +872,24 @@ export const register: Register = (on, options) => {
     const kept: Record<string, unknown> = {}
     for (const key of STORED) kept[key] = await $.store.get(key).catch(() => undefined)
     live.chords = liveChords(await $.store.get('chords').catch(() => undefined))
-    const loaded = liveSettings(kept, { ...defaults, animation: 'wave' })
+    const loaded = liveSettings(kept, { ...defaults, animation: 'wave', interrupt: SETTINGS.interrupt })
     live.voice = loaded.voice
     live.animation = loaded.animation
+    live.interrupt = loaded.interrupt
     config.vadEndSilenceMs = loaded.silenceMs
     await showSettings($)
     await update($, status, () => (was.isOn ? { ...was, queue: 0, voice: live.voice } : { ...OFF, voice: live.voice }))
     $.clock.after(0, () => void recover($, was))
     await $.command.register({
       name: 'live',
-      description: 'Hands-free voice conversation (local Whisper + Kokoro); /live config: voice, colors, animation, silence',
-      argumentHint: '[on|off|mute|status|voice <name>|config [test|voice <name>|animation <wave|bars|off>|silence <ms>|<target> <theme|name|#hex>|keys [apply]|mute <chord>|stop <chord>|reset]]',
+      description: 'Hands-free voice conversation (local Whisper + Kokoro); /live config: voice, colors, animation, silence, interrupt',
+      argumentHint: '[on|off|mute|status|voice <name>|config [test|voice <name>|animation <wave|bars|off>|silence <ms>|interrupt <off|headphones|speakers>|<target> <theme|name|#hex>|keys [apply]|mute <chord>|stop <chord>|reset]]',
       immediate: true,
     })
     await $.command.register({
       name: 'live-config',
-      description: 'Live voice settings: voice, colors, animation, end-of-speech silence, mute/stop shortcuts',
-      argumentHint: '[test|voice <name>|animation <wave|bars|off>|silence <ms>|<target> <theme|name|#hex>|keys [apply]|mute <chord>|stop <chord>|reset]',
+      description: 'Live voice settings: voice, colors, animation, end-of-speech silence, interrupt by voice, mute/stop shortcuts',
+      argumentHint: '[test|voice <name>|animation <wave|bars|off>|silence <ms>|interrupt <off|headphones|speakers>|<target> <theme|name|#hex>|keys [apply]|mute <chord>|stop <chord>|reset]',
       immediate: true,
     })
 
@@ -840,15 +923,17 @@ export const register: Register = (on, options) => {
     }
     const stream = next(e)
     let block = -1
+    // A barge-in forgets the turn: the rest of its reply is not spoken.
+    const isLive = () => live.turns.get(e.turnId) === chunker
     for await (const chunk of stream) {
-      if (chunk.kind === 'text') {
+      if (chunk.kind === 'text' && isLive()) {
         const pieces = block >= 0 && chunk.index !== block ? chunker.push('\n') : []
         block = chunk.index
         enqueue($, [...pieces, ...chunker.push(chunk.text)])
       }
       yield chunk
     }
-    enqueue($, chunker.push('\n'))
+    if (isLive()) enqueue($, chunker.push('\n'))
 
     return stream.result
   })
@@ -953,6 +1038,7 @@ export const register: Register = (on, options) => {
           <Text>Voice           {voiceLabel(current.voice)}</Text>
           <Text>Animation       {current.animation}</Text>
           <Text>End silence     {current.silenceMs} ms</Text>
+          <Text>Interrupt       {current.interrupt}</Text>
           {COLOR_TARGETS.map(target => (
             <Text>
               {COLOR_LABELS[target]} <Text color={now[target]}>●</Text> {now[target]}
@@ -987,6 +1073,7 @@ export const register: Register = (on, options) => {
     const targetOptions = COLOR_TARGETS.map(target => ({ value: target, label: COLOR_LABELS[target].trim() }))
     const animationOptions = ANIMATIONS.map(animation => ({ value: animation }))
     const silenceOptions = silences.map(ms => ({ value: String(ms) }))
+    const interruptOptions = INTERRUPTS.map(interrupt => ({ value: interrupt }))
     const preview = waveFrame(0)
     const stepFine = 'fine'
     const stepCoarse = `coarse (${COARSE})`
@@ -1144,6 +1231,21 @@ export const register: Register = (on, options) => {
             onSelect={(value: string) => {
               const ms = Number(value)
               if (silences.includes(ms)) void setSilence($, ms)
+            }}
+          />
+        ),
+      },
+      {
+        width: selectWidth('Interrupt', interruptOptions),
+        node: (
+          <Select
+            key="interrupt"
+            label="Interrupt"
+            options={interruptOptions}
+            value={current.interrupt}
+            onSelect={(value: string) => {
+              const interrupt = INTERRUPTS.find(one => one === value)
+              if (interrupt !== undefined) void setInterrupt($, interrupt)
             }}
           />
         ),

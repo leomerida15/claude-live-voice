@@ -46,6 +46,8 @@ export type World = {
   toasts: string[]
   /** The voices Kokoro's `/v1/audio/voices` lists; undefined: Kokoro is not answering. */
   voices: { list: string[] | undefined }
+  /** The turn ids the plugin aborted with `$.turn.abort`, oldest first. */
+  aborts: string[]
 }
 
 /**
@@ -94,6 +96,7 @@ export function fakeWorld(on: On, transcript = 'hola mundo'): World {
     speech: { code: 0, stderr: '' },
     toasts: [],
     voices: { list: ['af_heart', 'bm_george', 'em_alex', 'ef_dora', 'em_santa'] },
+    aborts: [],
   }
   on('state.set', (_$, e, next) => {
     stateWrites += 1
@@ -180,6 +183,11 @@ export function fakeWorld(on: On, transcript = 'hola mundo'): World {
     return { text: e.text, origin: e.origin }
   })
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  on('turn.abort', (_$, e) => {
+    world.aborts.push(e.turnId)
+
+    return { value: undefined }
+  })
   on('turn.complete', (_$, e) => ({ text: e.answer }))
   on('turn.step', async function* (_$, e) {
     yield { kind: 'text' as const, index: 0, text: world.reply.text }

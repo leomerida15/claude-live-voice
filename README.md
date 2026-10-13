@@ -47,13 +47,14 @@ claude --plugin-dir /path/to/claude-live-voice
 | `/live mute` | Mutes or unmutes the microphone. Replies are still spoken. |
 | `/live voice <name>` | Changes the Kokoro voice, for example `ef_dora` or `em_alex`, and keeps it. |
 | `/live status` | Shows the current state, the voice and the queue. |
-| `/live config` | Opens the settings dialog: voice, colors, animation, end-of-speech silence. |
+| `/live config` | Opens the settings dialog: voice, colors, animation, end-of-speech silence, interrupt. |
 | `/live-config` | The same dialog as `/live config`; every `/live config ...` shortcut works as `/live-config ...` (a command name cannot hold a colon, so there is no `/live:config`). |
 | `/live config voice <name>` | Sets the voice, like `/live voice`. |
 | `/live config test` | Says a short sample in the selected voice (Spanish voices in Spanish, the rest in English). |
 | `/live config <user\|agent\|dot\|idle> <color>` | Sets one color directly: a theme color, a named color or `#rrggbb`, for example `/live config agent magenta`, `/live config user claude` or `/live config dot #ff8800`. |
 | `/live config animation <wave\|bars\|off>` | How the band's wave moves. |
 | `/live config silence <1000\|1500\|2000\|2500\|3000>` | The silence (ms) that ends what you say; restarts the listener. |
+| `/live config interrupt <off\|headphones\|speakers>` | How speaking over a reply interrupts it (see [Interrupting by voice](#interrupting-by-voice)). |
 | `/live config reset` | Restores every setting above to its default. |
 
 While live mode is on, a band of two rows sits above the prompt.
@@ -115,6 +116,24 @@ Only replies to prompts you spoke are read aloud. Prompts you type are answered
 as usual, in silence. Code blocks are never read: the mod says "código omitido"
 once instead.
 
+## Interrupting by voice
+
+While Claude speaks a reply to a prompt you spoke, the microphone keeps
+listening. Speak over the reply and the mod cuts the voice at once, drops the
+sentences still waiting, aborts Claude's turn (as `Esc` does) and sends what you
+said as the next prompt. Prompts you typed are never aborted by voice, and while
+the microphone is muted nothing interrupts. The `interrupt` setting chooses how:
+
+| Mode | While a reply plays |
+| --- | --- |
+| `speakers` (default) | Listens, but speech must be twice as far over the room's noise as usual and last about 400 ms, so the reply's own echo does not count. The pause after playback (`echoTailMs`) still applies. |
+| `headphones` | Listens with the normal thresholds: no echo reaches the microphone. |
+| `off` | The microphone is paused while Claude speaks (half-duplex). Interrupt with `Esc` or the band's `s` button. |
+
+Echo cancellation helps barge-in on speakers. PulseAudio and PipeWire offer
+`module-echo-cancel`; the mod never loads it or changes your audio setup, but
+you may set it up yourself and make its source the default microphone.
+
 ## Live settings
 
 `/live config` opens a dialog with one picker per setting, plus `Restore` (the
@@ -129,6 +148,7 @@ answers with every current setting and the commands that change them.
 | Voice | The Kokoro voice, shown as `Dora · Spanish · female (ef_dora)`. The list comes from Kokoro (`/v1/audio/voices`), grouped by each voice's native language (the id's first letter: `a` American English, `b` British English, `e` Spanish, `f` French, `h` Hindi, `i` Italian, `j` Japanese, `p` Brazilian Portuguese, `z` Mandarin Chinese; the second letter is `f` female or `m` male), the session `language` first; a built-in list when Kokoro does not answer. Two pickers, as a picker takes at most 64 entries and Kokoro lists more: `Language` (starts on the current voice's), then `Voice` with only that language's voices (`Dora (female)`); changing the language alone keeps the voice. `Test voice` (hotkey `t`) says a sample with it; it is refused while a reply is being spoken. | `voice` below |
 | Animation | `wave` (a line bouncing with the sound), `bars` (the same, as bars) or `off` (a still dim line). | `wave` |
 | End silence | 1000-3000 ms of silence that ends what you say; a change restarts the listener. | `vadEndSilenceMs` below |
+| Interrupt | How speaking over a reply interrupts it: `off`, `headphones` or `speakers` (see [Interrupting by voice](#interrupting-by-voice)). | `speakers` |
 | Colors | The band's colors, below. | |
 | Shortcuts | The mute and stop chords, written to `~/.claude/keybindings.json` (see above). `Restore` leaves them as they are. | `alt+m`, `alt+s` |
 
@@ -182,9 +202,11 @@ positive number falls back to its default.
 
 ## Limitations
 
-- **Half-duplex.** The microphone ignores audio while Claude speaks, so the reply
-  is not transcribed back as a new prompt. You cannot interrupt by talking; press
-  `Esc` or the band's `s` button instead.
+- **Barge-in on speakers is a threshold, not echo cancellation.** With
+  `interrupt speakers` the reply's own sound reaches the microphone; only speech
+  clearly louder than it (and held about 400 ms) interrupts. A loud speaker, a
+  quiet voice or a far microphone can miss a barge-in or take the echo for one:
+  use headphones, lower the volume, or set `interrupt off`.
 - **No global keys.** A mod cannot bind keys outside the terminal. To mute from
   anywhere, use your desktop's microphone mute shortcut (on KDE, for example, a
   shortcut such as `Meta+Space` bound to "Mute microphone").

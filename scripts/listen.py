@@ -4,8 +4,14 @@
 Reads 16 kHz mono S16_LE PCM from `arecord` (or stdin with --stdin), and for
 each utterance writes one WAV file into --dir and prints its absolute path on
 its own line. While listening it also prints `level <0..1>` lines, about 8 a
-second, for a live meter (--no-levels turns them off). While the --pause-file holds "1", audio is discarded (half-duplex
-while the reply is spoken, or muted). Standard library only.
+second, for a live meter (--no-levels turns them off).
+
+The --pause-file selects the mode: "1" discards audio (muted, or half-duplex
+while a reply is spoken); "2" is barge-in listening while a reply plays: an
+utterance needs the stricter --barge-ratio and --barge-frames to start (so the
+reply's own echo does not), the noise floor is not adapted to that echo, and
+`barge` is printed the moment one starts, before its WAV path follows; anything
+else is normal listening. Standard library only.
 """
 
 import argparse
@@ -55,34 +61,58 @@ def rms(frame):
     return math.sqrt(sum(s * s for s in samples) / len(samples))
 
 
+NORMAL = "0"
+PAUSED = "1"
+BARGE = "2"
+
+
 class PauseFlag:
-    """Reads the pause file at most every PAUSE_CHECK_S seconds; "1" means paused."""
+    """Reads the pause file at most every PAUSE_CHECK_S seconds: "1" paused,
+    "2" barge-in listening, anything else (or no file) normal."""
 
     def __init__(self, path):
         self.path = path
         self.checked = 0.0
-        self.paused = False
+        self.mode = NORMAL
 
-    def is_paused(self):
+    def read(self):
         if not self.path:
-            return False
+            return NORMAL
         now = time.monotonic()
         if now - self.checked >= PAUSE_CHECK_S:
             self.checked = now
             try:
                 with open(self.path, encoding="utf-8") as flag:
-                    self.paused = flag.read().strip() == "1"
+                    text = flag.read().strip()
+                self.mode = text if text in (PAUSED, BARGE) else NORMAL
             except OSError:
-                self.paused = False
-        return self.paused
+                self.mode = NORMAL
+        return self.mode
+
+    def is_paused(self):
+        return self.read() == PAUSED
 
 
 class Detector:
-    def __init__(self, on_utterance, end_silence_ms=END_SILENCE_MS, start_frames=START_FRAMES, start_ratio=START_RATIO):
+    def __init__(
+        self,
+        on_utterance,
+        end_silence_ms=END_SILENCE_MS,
+        start_frames=START_FRAMES,
+        start_ratio=START_RATIO,
+        barge_ratio=None,
+        barge_frames=None,
+        on_barge=None,
+    ):
         self.on_utterance = on_utterance
         self.end_silence_ms = end_silence_ms
         self.start_frames = start_frames
         self.start_ratio = start_ratio
+        self.barge_ratio = start_ratio if barge_ratio is None else barge_ratio
+        self.barge_frames = start_frames if barge_frames is None else barge_frames
+        self.on_barge = on_barge
+        # True while a reply plays and speech over it is a barge-in.
+        self.barge = False
         self.floor = None
         self.calibration = []
         self.pre_roll = collections.deque(maxlen=frames_for(PRE_ROLL_MS))
@@ -97,7 +127,8 @@ class Detector:
         self.pre_roll.clear()
 
     def threshold(self):
-        return max((self.floor or 0.0) * self.start_ratio, MIN_START_RMS)
+        ratio = self.barge_ratio if self.barge else self.start_ratio
+        return max((self.floor or 0.0) * ratio, MIN_START_RMS)
 
     def feed(self, frame):
         """Takes one frame; returns its RMS."""
@@ -113,15 +144,19 @@ class Detector:
             self.pre_roll.append(frame)
             if level > start:
                 self.loud_run += 1
-                if self.loud_run >= self.start_frames:
+                if self.loud_run >= (self.barge_frames if self.barge else self.start_frames):
                     self.speaking = True
                     self.frames = list(self.pre_roll)
                     self.speech_frames = self.loud_run
                     self.silent_run = 0
                     self.pre_roll.clear()
+                    if self.barge and self.on_barge is not None:
+                        self.on_barge()
             else:
                 self.loud_run = 0
-                self.floor = 0.95 * self.floor + 0.05 * level
+                # The reply's echo is not the room: the floor stays where it was.
+                if not self.barge:
+                    self.floor = 0.95 * self.floor + 0.05 * level
             return level
         self.frames.append(frame)
         if level > start * END_RATIO:
@@ -195,6 +230,11 @@ def writer(directory):
     return write
 
 
+def announce_barge():
+    sys.stdout.write("barge\n")
+    sys.stdout.flush()
+
+
 def default_dir():
     base = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
     return os.path.join(base, "live-voice")
@@ -216,7 +256,9 @@ def positive(kind):
 def parse_args(argv):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dir", default=default_dir(), help="where utterance WAV files are written")
-    parser.add_argument("--pause-file", default=None, help='file whose content "1" pauses listening')
+    parser.add_argument(
+        "--pause-file", default=None, help='file holding "1" (paused), "2" (barge-in listening) or "0" (normal)'
+    )
     parser.add_argument("--stdin", action="store_true", help="read raw PCM from stdin instead of arecord")
     parser.add_argument("--device", default=None, help="arecord capture device (-D)")
     parser.add_argument(
@@ -230,6 +272,18 @@ def parse_args(argv):
         type=positive(float),
         default=START_RATIO,
         help="how far over the calibrated noise floor speech must be",
+    )
+    parser.add_argument(
+        "--barge-ratio",
+        type=positive(float),
+        default=None,
+        help='start ratio over the noise floor while the pause file holds "2" (default: --threshold-factor)',
+    )
+    parser.add_argument(
+        "--barge-frames",
+        type=positive(int),
+        default=None,
+        help='loud frames that start a barge-in while the pause file holds "2" (default: --start-frames)',
     )
     parser.add_argument("--no-levels", action="store_true", help="do not print `level` lines for a meter")
     parser.add_argument("--tag", default=None, help="session tag; ignored, it lets the caller find this process")
@@ -256,6 +310,9 @@ def main(argv=None):
         end_silence_ms=args.end_silence_ms,
         start_frames=args.start_frames,
         start_ratio=args.threshold_factor,
+        barge_ratio=args.barge_ratio,
+        barge_frames=args.barge_frames,
+        on_barge=announce_barge,
     )
     pause = PauseFlag(args.pause_file)
     meter = Meter(enabled=not args.no_levels)
@@ -264,10 +321,12 @@ def main(argv=None):
             frame = source.read(FRAME_BYTES)
             if not frame or len(frame) < FRAME_BYTES:
                 break
-            if pause.is_paused():
+            mode = pause.read()
+            if mode == PAUSED:
                 detector.reset()
                 meter.reset()
                 continue
+            detector.barge = mode == BARGE
             meter.feed(detector.feed(frame), detector.floor)
         detector.finish()
     except KeyboardInterrupt:

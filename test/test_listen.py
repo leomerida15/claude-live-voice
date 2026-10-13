@@ -81,6 +81,56 @@ class ListenTest(unittest.TestCase):
         self.assertEqual(len(paths), 1)
 
 
+class BargeTest(unittest.TestCase):
+    """Pause file "2": listening while a reply plays, with a stricter start (barge-in)."""
+
+    # Over a noise floor of 200 RMS: the normal start is 3x (600), barge-in 6x (1200).
+    BARGE = ("--barge-ratio", "6", "--barge-frames", "14")
+
+    def lines(self, audio, pause=None, extra=()):
+        with tempfile.TemporaryDirectory() as tmp:
+            args = [sys.executable, "-I", str(SCRIPT), "--stdin", "--dir", tmp, "--no-levels", *extra]
+            if pause is not None:
+                flag = os.path.join(tmp, "paused")
+                pathlib.Path(flag).write_text(pause)
+                args += ["--pause-file", flag]
+            done = subprocess.run(args, input=audio, capture_output=True, timeout=30, check=True)
+            return ["path" if line.startswith("/") else line for line in done.stdout.decode().splitlines()]
+
+    def room(self, seconds):
+        return silence(seconds, noise=200)
+
+    def test_barge_mode_ignores_a_quieter_echo_the_normal_mode_takes(self):
+        # About 800 RMS: over the normal start, under the barge-in one.
+        audio = pcm(self.room(1.0), tone(1.0, amplitude=1130), self.room(2.5))
+        self.assertEqual(self.lines(audio, pause="0", extra=self.BARGE), ["path"])
+        self.assertEqual(self.lines(audio, pause="2", extra=self.BARGE), [])
+
+    def test_barge_mode_prints_barge_then_the_path_for_loud_sustained_speech(self):
+        audio = pcm(self.room(1.0), tone(1.0), self.room(2.5))
+        self.assertEqual(self.lines(audio, pause="2", extra=self.BARGE), ["barge", "path"])
+
+    def test_barge_mode_ignores_a_loud_burst_shorter_than_the_barge_frames(self):
+        # 0.3 s is 10 frames: enough for the normal start (3), not for barge-in (14).
+        audio = pcm(self.room(1.0), tone(0.3), self.room(2.5))
+        self.assertEqual(self.lines(audio, pause="0", extra=self.BARGE), ["path"])
+        self.assertEqual(self.lines(audio, pause="2", extra=self.BARGE), [])
+
+    def test_paused_and_normal_modes_never_print_barge(self):
+        audio = pcm(self.room(1.0), tone(1.0), self.room(2.5))
+        self.assertEqual(self.lines(audio, pause="1", extra=self.BARGE), [])
+        self.assertEqual(self.lines(audio, pause="0", extra=self.BARGE), ["path"])
+
+    def test_barge_flags_must_be_positive(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for bad in (("--barge-ratio", "0"), ("--barge-frames", "-1")):
+                done = subprocess.run(
+                    [sys.executable, "-I", str(SCRIPT), "--stdin", "--dir", tmp, *bad],
+                    input=b"", capture_output=True, timeout=30,
+                )
+                self.assertEqual(done.returncode, 2)
+
+
 class LevelTest(unittest.TestCase):
     def levels(self, audio, pause=None, extra=()):
         with tempfile.TemporaryDirectory() as tmp:

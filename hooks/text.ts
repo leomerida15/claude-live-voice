@@ -1,7 +1,7 @@
 // Pure text helpers of the live-voice mod: command parsing, transcript
 // filtering, markdown stripping and sentence chunking for speech.
 
-import type { LiveVoiceAnimation, LiveVoiceColor, LiveVoiceColors, LiveVoiceNamedColor, LiveVoiceThemeColor } from '../types'
+import type { LiveVoiceAnimation, LiveVoiceColor, LiveVoiceColors, LiveVoiceInterrupt, LiveVoiceNamedColor, LiveVoiceThemeColor } from '../types'
 
 export const USAGE = 'Usage: /live [on|off|mute|status|voice <name>|config]'
 
@@ -99,8 +99,41 @@ export const ANIMATIONS: readonly LiveVoiceAnimation[] = ['wave', 'bars', 'off']
 /** The end-of-speech silences `/live config` offers, in ms. */
 export const SILENCES: readonly number[] = [1000, 1500, 2000, 2500, 3000]
 
+/**
+ * How speaking over a reply interrupts it: `off` pauses the mic while Claude
+ * speaks (half-duplex); `headphones` listens with the normal start; `speakers`
+ * listens with a louder, sustained start that the reply's own echo does not reach.
+ */
+export const INTERRUPTS: readonly LiveVoiceInterrupt[] = ['off', 'headphones', 'speakers']
+
+/** With `speakers`, a barge-in needs this many times the normal start ratio... */
+export const BARGE_RATIO_FACTOR = 2
+/** ...held this long (ms) without a drop below it. */
+export const BARGE_SUSTAIN_MS = 400
+// listen.py's frame length.
+const FRAME_MS = 30
+
+/** listen.py's barge-in start: ratio over the noise floor and loud frames in a row. */
+export function bargeFlags(interrupt: LiveVoiceInterrupt, startRatio: number, startFrames: number): { ratio: number; frames: number } {
+  if (interrupt !== 'speakers') return { ratio: startRatio, frames: startFrames }
+
+  return { ratio: startRatio * BARGE_RATIO_FACTOR, frames: Math.max(startFrames, Math.ceil(BARGE_SUSTAIN_MS / FRAME_MS)) }
+}
+
+/**
+ * The pause file's content for listen.py: `1` paused (muted, a voice sample or
+ * the echo tail after a reply, or a reply with interrupt off), `2` barge-in
+ * listening while a reply plays, `0` normal listening. Muted wins.
+ */
+export function pauseMode(now: { isMuted: boolean; isSpeaking: boolean; isHeld: boolean; interrupt: LiveVoiceInterrupt }): '0' | '1' | '2' {
+  if (now.isMuted || now.isHeld) return '1'
+  if (!now.isSpeaking) return '0'
+
+  return now.interrupt === 'off' ? '1' : '2'
+}
+
 export const CONFIG_USAGE =
-  `Usage: /live config [reset | test | voice <name> | animation <${ANIMATIONS.join('|')}> | silence <${SILENCES.join('|')}> | keys [apply] | mute <chord> | stop <chord>` +
+  `Usage: /live config [reset | test | voice <name> | animation <${ANIMATIONS.join('|')}> | silence <${SILENCES.join('|')}> | interrupt <${INTERRUPTS.join('|')}> | keys [apply] | mute <chord> | stop <chord>` +
   ` | <${COLOR_TARGETS.join('|')}> <color>]; a color is a theme color (${THEME_COLORS.join('|')}),` +
   ` a named color (${COLORS.join('|')}) or #rrggbb`
 
@@ -119,10 +152,12 @@ export function liveColors(value: unknown): LiveVoiceColors {
 }
 
 /** The settings `/live config` keeps beside the colors, each under its own `$.store` key. */
-export type LiveSettings = { voice: string; animation: LiveVoiceAnimation; silenceMs: number }
+export type LiveSettings = { voice: string; animation: LiveVoiceAnimation; silenceMs: number; interrupt: LiveVoiceInterrupt }
 
 const isAnimation = (value: unknown): value is LiveVoiceAnimation =>
   typeof value === 'string' && (ANIMATIONS as readonly string[]).includes(value)
+const isInterrupt = (value: unknown): value is LiveVoiceInterrupt =>
+  typeof value === 'string' && (INTERRUPTS as readonly string[]).includes(value)
 const isSilence = (value: unknown): value is number => typeof value === 'number' && SILENCES.includes(value)
 const isVoice = (value: unknown): value is string => typeof value === 'string' && VOICE_NAME.test(value)
 
@@ -132,6 +167,7 @@ export function liveSettings(stored: Record<string, unknown>, defaults: LiveSett
     voice: isVoice(stored.voice) ? stored.voice : defaults.voice,
     animation: isAnimation(stored.animation) ? stored.animation : defaults.animation,
     silenceMs: isSilence(stored.silenceMs) ? stored.silenceMs : defaults.silenceMs,
+    interrupt: isInterrupt(stored.interrupt) ? stored.interrupt : defaults.interrupt,
   }
 }
 
@@ -289,6 +325,7 @@ export type LiveCommand =
   | { kind: 'config-voice'; voice: string }
   | { kind: 'config-animation'; animation: LiveVoiceAnimation }
   | { kind: 'config-silence'; silenceMs: number }
+  | { kind: 'config-interrupt'; interrupt: LiveVoiceInterrupt }
   | { kind: 'config-keys' }
   | { kind: 'config-keys-apply' }
   | { kind: 'config-chord'; which: 'mute' | 'stop'; chord: string }
@@ -307,6 +344,7 @@ function parseConfig(rest: string[]): LiveCommand {
   if (first === 'animation' && isAnimation(second) && extra.length === 0) return { kind: 'config-animation', animation: second }
   const silenceMs = /^\d+$/.test(second) ? Number(second) : NaN
   if (first === 'silence' && isSilence(silenceMs) && extra.length === 0) return { kind: 'config-silence', silenceMs }
+  if (first === 'interrupt' && isInterrupt(second) && extra.length === 0) return { kind: 'config-interrupt', interrupt: second }
   if (first === 'keys' && rest.length === 1) return { kind: 'config-keys' }
   if (first === 'keys' && second === 'apply' && extra.length === 0) return { kind: 'config-keys-apply' }
   if ((first === 'mute' || first === 'stop') && rest.length === 2) {
@@ -527,8 +565,11 @@ export class SentenceChunker {
   }
 }
 
-/** A line of listen.py's stdout: a meter level (0..1) or an utterance's WAV path. */
-export type ListenerLine = { kind: 'level'; value: number } | { kind: 'wav'; path: string }
+/**
+ * A line of listen.py's stdout: a meter level (0..1), `barge` (speech started
+ * over a reply; its WAV path follows), or an utterance's WAV path.
+ */
+export type ListenerLine = { kind: 'level'; value: number } | { kind: 'barge' } | { kind: 'wav'; path: string }
 
 const LEVEL_LINE = /^level\s+(\S+)$/
 
@@ -541,6 +582,8 @@ export function parseListenerLine(line: string): ListenerLine | undefined {
 
     return Number.isFinite(value) && value >= 0 ? { kind: 'level', value: Math.min(1, value) } : undefined
   }
+
+  if (text === 'barge') return { kind: 'barge' }
 
   return text.startsWith('/') ? { kind: 'wav', path: text } : undefined
 }

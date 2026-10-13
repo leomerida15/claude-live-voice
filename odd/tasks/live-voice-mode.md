@@ -23,7 +23,7 @@ extra cost (local services + Claude plan).
   queue depth, buttons `m` mute, `s` stop.
 
 ## Out of scope (v1)
-Barge-in while speaking, global keybindings (mic mute is handled by the KDE
+Global keybindings (mic mute is handled by the KDE
 Meta+Space shortcut), cloud providers, non-Linux audio.
 
 ## Constraints
@@ -135,6 +135,17 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
   Dialog row with Mute / Stop Selects of suggested chords. Defaults meta+m / meta+s; kept in `$.store`; the
   band's hint shows the current chords (meta drawn as alt). Only a change writes the file. Test-first.
 
+### Barge-in (user-approved behavior 2026-10-13)
+- [x] T26 Barge-in: interrupt the agent by speaking. When the person speaks over a spoken reply, cut the voice
+  at once, drop the queued sentences, abort the live turn (`$.turn.abort({ turnId })`, the id `turn.start`
+  handed the plugin), and submit what they said as the next live prompt. Setting `interrupt`
+  (`off|headphones|speakers`, default `speakers`) in `/live config interrupt <mode>`, the dialog, the summary,
+  `$.store`, README. Pause file modes: `1` paused (muted, interrupt off while speaking, voice test, echo tail),
+  `0` normal, `2` barge-in listening with `--barge-ratio`/`--barge-frames` (speakers: 2x the start ratio and
+  400 ms of sustained speech; headphones: the normal thresholds, still mode `2` so `barge` cuts the voice
+  before the utterance ends). listen.py prints `barge` when an utterance starts in mode `2` and keeps the
+  noise floor still there. Muted wins; typed turns are never aborted. Test-first.
+
 ## Acceptance criteria
 - `claude plugin validate .` passes; type-check passes; `claude plugin test .` passes.
 - Helpers run standalone (listen.py prints a WAV path per utterance; speak.sh plays text).
@@ -155,9 +166,10 @@ ask-on-risk. Forecast ~600 authored lines.
   T23: delegated direct (writer trigger: register.tsx, text.ts, types, tests, docs).
   T24: delegated direct (writer trigger: register.tsx, text.ts, tests, docs).
   T25: delegated direct (writer trigger: register.tsx, text.ts, tests, docs).
+  T26: delegated direct (writer trigger: listen.py, register.tsx, text.ts, types, tests, docs).
 
 ## Out of scope (hardening)
-Barge-in, global keybindings, cloud providers.
+Global keybindings, cloud providers (barge-in was out of scope until T26, authorized 2026-10-13).
 
 ## Progress / Evidence
 - T1 done (route: delegated direct). Commit b3c2487. Evidence: `claude plugin validate .` passed with no warnings
@@ -466,6 +478,25 @@ Barge-in, global keybindings, cloud providers.
   overwritten; Restore does not touch the chords. Not verified: the file write to the real HOME, Claude
   Code's live reload of it, and which chords the desktop leaves to the terminal.
   Commit: see git log (`feat: configurable mute and stop chords in keybindings.json`).
+
+- T26 done (route: delegated direct; writer trigger: listen.py, register.tsx, text.ts, types, tests, docs).
+  Turn abort: `$.turn.abort({ turnId })` (claude-code.d.ts: cancels the running model turn whose id `turn.start`
+  handed this plugin; rejects when it is not the running turn, caught). RED: `claude plugin test .` -> 83 pass,
+  6 fail (`test/text.test.ts` did not load: `INTERRUPTS` missing; 5 of 8 `test/barge.test.ts` tests: no abort,
+  no `--barge-ratio`, no `interrupt` setting; the off/muted/typed ones already held). `python3 -I -m unittest
+  discover -s test -p 'test_*.py'` -> 28 run, 4 errors (unknown `--barge-ratio`). GREEN: engine 130 pass,
+  0 fail (barge line while speaking -> pkill speak.sh, 0 queued, state `listening`, `turn.abort` t1, pause
+  `0` with no echo tail, next WAV submitted; after the turn ended -> nothing aborted; interrupt off -> pause
+  `1`, barge ignored; muted -> `1`, ignored; typed turn never aborted; speakers flags `--barge-ratio 6
+  --barge-frames 14`, headphones `3`/`3` with a listener restart; dialog `interrupt` Select, summary, store,
+  reset). Python 28 OK (mode 2 ignores an ~800 RMS echo the normal mode takes, ignores a 0.3 s loud burst,
+  prints `barge` then the path for 1 s of speech; modes 0/1 never print `barge`; non-positive flags exit 2).
+  `claude plugin validate .` passed (1 expected CLAUDE.md warning); `bash -n scripts/speak.sh` ok; tsc no
+  output. Decisions: headphones use mode `2` with the normal thresholds (so `barge` still cuts the voice
+  before the utterance ends); the echo tail and a voice sample keep the mic at `1`; the noise floor does not
+  adapt in mode `2`; a barge-in forgets the live turn first so its remaining streamed text is not queued.
+  Not verified: real echo levels on speakers, the engine aborting a real turn, `module-echo-cancel`.
+  Commit: see git log (`feat: barge-in interrupts the spoken reply by voice`).
 
 ## Next step
 The human runs `docs/smoke-test.md` with the microphone and reports failed steps. Not verified yet:

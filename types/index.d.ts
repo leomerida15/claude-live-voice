@@ -47,11 +47,18 @@ export type LiveVoiceColors = { user: LiveVoiceColor; agent: LiveVoiceColor; dot
 export type LiveVoiceAnimation = 'wave' | 'bars' | 'off'
 
 /**
- * The settings `/live config` changes beside the colors, each kept in
- * `$.store` under its own key: the Kokoro voice, how the wave moves, and the
- * silence (ms) that ends an utterance.
+ * How speaking over a spoken reply interrupts it (barge-in): `off` pauses the
+ * mic while Claude speaks; `headphones` listens with the normal start;
+ * `speakers` needs a louder, sustained start so the reply's echo does not count.
  */
-export type LiveVoiceSettings = { voice: string; animation: LiveVoiceAnimation; silenceMs: number }
+export type LiveVoiceInterrupt = 'off' | 'headphones' | 'speakers'
+
+/**
+ * The settings `/live config` changes beside the colors, each kept in
+ * `$.store` under its own key: the Kokoro voice, how the wave moves, the
+ * silence (ms) that ends an utterance, and how speaking interrupts a reply.
+ */
+export type LiveVoiceSettings = { voice: string; animation: LiveVoiceAnimation; silenceMs: number; interrupt: LiveVoiceInterrupt }
 
 /**
  * The settings dialog's color editor: which color the theme swatches and the

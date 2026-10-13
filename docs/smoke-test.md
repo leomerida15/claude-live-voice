@@ -61,6 +61,13 @@ Mark each step pass or fail and note what you heard or saw on a failure.
   stops speech, without focusing the band. Typing in the prompt is not affected.
 - [ ] `ctrl+x tab` focuses the band; `m` toggles mute; `s` stops speech mid-sentence.
 - [ ] `Esc` during a spoken reply aborts the turn, stops playback at once and drops the queue.
+- [ ] Barge-in (`interrupt speakers`, the default, on speakers): ask a long question by voice; while the reply
+  plays, say "para, otra cosa" clearly. The voice stops at once, the band shows `listening`, the turn is
+  aborted (the transcript marks it interrupted) and your words arrive as the next prompt. Let a reply play
+  without speaking: its own echo does not interrupt it. Muted (`m`), speaking over a reply does nothing.
+- [ ] `/live config interrupt headphones` with headphones: a normal voice interrupts. `/live config interrupt
+  off`: speaking over a reply does nothing (half-duplex); `Esc` still interrupts. A typed prompt's turn is never
+  aborted by voice.
 - [ ] `/live voice em_alex`, ask something: the new voice is used. `/live status` reports it.
 - [ ] `/live status` reports state, voice and queue.
 - [ ] `/live-config` opens the same settings dialog as `/live config`; `/live-config voice em_alex` sets the voice.

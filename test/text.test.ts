@@ -22,6 +22,9 @@ import {
   SPEECH_GATE,
   smoothLevel,
   parseListenerLine,
+  INTERRUPTS,
+  bargeFlags,
+  pauseMode,
   parseLiveCommand,
   sessionTag,
   stripMarkdown,
@@ -235,6 +238,9 @@ describe('meter', () => {
     expect(parseListenerLine('level nan')).toBeUndefined()
     expect(parseListenerLine('level -1')).toBeUndefined()
     expect(parseListenerLine('relative.wav')).toBeUndefined()
+    expect(parseListenerLine('barge')).toEqual({ kind: 'barge' })
+    expect(parseListenerLine(' barge ')).toEqual({ kind: 'barge' })
+    expect(parseListenerLine('barge now')).toBeUndefined()
   })
 
   test('levelGlyph maps 0..1 to the eight block heights', () => {
@@ -318,11 +324,49 @@ describe('meter', () => {
   })
 
   test('liveSettings keeps the valid stored settings and defaults the rest', () => {
-    const defaults = { voice: 'ef_dora', animation: 'wave', silenceMs: 2000 } as const
+    const defaults = { voice: 'ef_dora', animation: 'wave', silenceMs: 2000, interrupt: 'speakers' } as const
     expect(liveSettings({}, defaults)).toEqual(defaults)
-    expect(liveSettings({ voice: 'em_alex', animation: 'bars', silenceMs: 3000 }, defaults)).toEqual({ voice: 'em_alex', animation: 'bars', silenceMs: 3000 })
-    expect(liveSettings({ voice: '../x', animation: 'spin', silenceMs: 1234 }, defaults)).toEqual(defaults)
-    expect(liveSettings({ voice: 7, animation: null, silenceMs: '2500' }, defaults)).toEqual(defaults)
+    expect(liveSettings({ voice: 'em_alex', animation: 'bars', silenceMs: 3000, interrupt: 'off' }, defaults)).toEqual({
+      voice: 'em_alex',
+      animation: 'bars',
+      silenceMs: 3000,
+      interrupt: 'off',
+    })
+    expect(liveSettings({ voice: '../x', animation: 'spin', silenceMs: 1234, interrupt: 'loud' }, defaults)).toEqual(defaults)
+    expect(liveSettings({ voice: 7, animation: null, silenceMs: '2500', interrupt: 1 }, defaults)).toEqual(defaults)
+  })
+
+  test('config interrupt sets how speaking over a reply interrupts it', () => {
+    expect(INTERRUPTS).toEqual(['off', 'headphones', 'speakers'])
+    expect(parseLiveCommand('config interrupt off')).toEqual({ kind: 'config-interrupt', interrupt: 'off' })
+    expect(parseLiveCommand('config interrupt Headphones')).toEqual({ kind: 'config-interrupt', interrupt: 'headphones' })
+    expect(parseLiveCommand('config interrupt speakers')).toEqual({ kind: 'config-interrupt', interrupt: 'speakers' })
+    for (const args of ['config interrupt', 'config interrupt loud', 'config interrupt off now']) {
+      const parsed = parseLiveCommand(args)
+      expect(parsed.kind === 'error' && parsed.message).toBe(CONFIG_USAGE)
+    }
+    expect(CONFIG_USAGE).toContain('interrupt <off|headphones|speakers>')
+  })
+
+  test('pauseMode: muted or held pauses, a reply listens for barge-in unless interrupt is off', () => {
+    const quiet = { isMuted: false, isSpeaking: false, isHeld: false }
+    for (const interrupt of INTERRUPTS) {
+      expect(pauseMode({ ...quiet, interrupt })).toBe('0')
+      expect(pauseMode({ ...quiet, isMuted: true, interrupt })).toBe('1')
+      expect(pauseMode({ ...quiet, isHeld: true, interrupt })).toBe('1')
+      expect(pauseMode({ ...quiet, isSpeaking: true, isMuted: true, interrupt })).toBe('1')
+      expect(pauseMode({ ...quiet, isSpeaking: true, isHeld: true, interrupt })).toBe('1')
+    }
+    expect(pauseMode({ ...quiet, isSpeaking: true, interrupt: 'off' })).toBe('1')
+    expect(pauseMode({ ...quiet, isSpeaking: true, interrupt: 'headphones' })).toBe('2')
+    expect(pauseMode({ ...quiet, isSpeaking: true, interrupt: 'speakers' })).toBe('2')
+  })
+
+  test('bargeFlags: speakers need a louder, sustained start; headphones and off the normal one', () => {
+    expect(bargeFlags('speakers', 3, 3)).toEqual({ ratio: 6, frames: 14 })
+    expect(bargeFlags('speakers', 4.5, 20)).toEqual({ ratio: 9, frames: 20 })
+    expect(bargeFlags('headphones', 3, 3)).toEqual({ ratio: 3, frames: 3 })
+    expect(bargeFlags('off', 4.5, 5)).toEqual({ ratio: 4.5, frames: 5 })
   })
 
   test('sortVoices puts the Spanish voices first and keeps only voice names', () => {

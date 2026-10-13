@@ -8,11 +8,14 @@ Pipeline: `arecord` -> `scripts/listen.py` (stdlib RMS VAD, one WAV per
 utterance, path on stdout) -> local Whisper `http://127.0.0.1:2022` (language
 `es`) -> `$.prompt.submit({ text, asUser: true })` -> the reply streamed through
 `turn.step`, split into sentences -> local Kokoro `http://127.0.0.1:8880`
-(voice `ef_dora`) via `scripts/speak.sh` -> `paplay`. Half-duplex: the mic is
-paused while speaking. Controls: `/live on|off|mute|status|voice <name>`, an
+(voice `ef_dora`) via `scripts/speak.sh` -> `paplay`. Barge-in (setting
+`interrupt`, default `speakers`): while a reply plays the mic keeps listening
+with a stricter start; speaking over it cuts the voice, aborts the live turn
+(`$.turn.abort`) and submits what was said. `interrupt off` pauses the mic
+while speaking (half-duplex). Controls: `/live on|off|mute|status|voice <name>`, an
 AbovePrompt band (`m` mute, `s` stop), `Esc` aborts the turn and playback.
 
-Out of scope: barge-in, global keybindings, cloud providers, non-Linux audio.
+Out of scope: global keybindings, cloud providers, non-Linux audio.
 
 ## Layout
 
@@ -24,7 +27,7 @@ Out of scope: barge-in, global keybindings, cloud providers, non-Linux audio.
 | `hooks/register.tsx` | The mod: `/live`, the loop, playback queue, band. |
 | `hooks/text.ts` | Pure helpers: command parsing, transcript filter, markdown stripping, sentence chunker. |
 | `types/index.d.ts` | `$.state` contract (`live-voice.status`). |
-| `scripts/listen.py` | VAD recorder (stdlib only). `--stdin` reads raw PCM for tests. |
+| `scripts/listen.py` | VAD recorder (stdlib only). Pause file `1` paused, `0` normal, `2` barge-in (prints `barge`). `--stdin` reads raw PCM for tests. |
 | `scripts/speak.sh` | Text on stdin -> Kokoro WAV -> `paplay`. Cleans up on SIGTERM. |
 | `test/*.test.ts(x)` | Engine tests (`claude plugin test`). |
 | `test/test_*.py` | Python tests for `listen.py`. |
@@ -88,7 +91,9 @@ interactive smoke test is in `docs/smoke-test.md`.
 Do not change the user's audio configuration (default sink or source,
 volumes, mutes, modules) while debugging. Read-only queries (`pactl info`,
 `pactl list`, `pactl get-*`) are fine; `pactl set-*`, `wpctl set-*`,
-`pacmd set-*` and `amixer set` are denied in `.claude/settings.json`. If audio
+`pacmd set-*` and `amixer set` are denied in `.claude/settings.json`. Never load
+`module-echo-cancel` (or any module) either: the README tells the person they may
+set it up themselves for barge-in on speakers. If audio
 seems wrong, report what the queries show and let the person fix it. The mod
 itself plays with plain `paplay` and records with plain `arecord`: no device
 is chosen or changed.
