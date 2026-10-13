@@ -40,8 +40,10 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
 
 ### v1 hardening (authorized 2026-10-13)
 - [x] T5 `CLAUDE.md`: what the mod is, layout, all checks, dev-run, mod API gotchas.
-- [x] T6 Correlate live turns by prompt origin (`prompt.submit` hook sees `origin.kind === 'plugin'`,
-  `name === 'live-voice'`), not by matching the raw transcript text. Test-first.
+- [x] T6 Correlate live turns with the plugin's own submissions: each `$.prompt.submit` keeps a record
+  (post-rewrite text from the submit result, or a drop); `turn.start` claims the oldest matching record
+  instead of matching the raw transcript text. (A `prompt.submit` hook was planned, but a plugin's own hook
+  does not run for its own submission.) Test-first.
 - [x] T7 Scope processes per session: a session token in the children's argv, a per-session runtime dir
   and pause flag; stop/silence kill only this session's children (no global `pkill -f <script>`). Test-first.
 - [x] T8 Hot-reload recovery: on `session.start`, kill this session's orphaned children; if `$.state` says
@@ -153,6 +155,17 @@ Barge-in, global keybindings, cloud providers.
   skipping, typed prompts silent, controls, two sessions (process scoping), hot reload, failure paths.
   Linked from README. Passive doc: structural readback only. CLAUDE.md corrected (own `prompt.submit`
   hook does not see own submissions) and the expected validate warning documented.
+
+- Native review (RDD on, risk high: process boundary in listen.py, shell in speak.sh) over 0aaf4ca..2db11f0:
+  consent granted, 4 lenses, APPROVED with no blocking finding; acknowledgement burned the authority
+  (lineage review-d0d472deb46aefce). Non-blocking follow-ups, not scheduled:
+  - R3 merged queued live prompts: only the oldest record is claimed; the rest linger (state stays
+    `thinking`, later turns may be claimed). `hooks/register.tsx:365`.
+  - R3 `claim()` substring match and "any pending submission" fallback can claim a typed turn.
+    `hooks/text.ts:53`.
+  - R4 hot-reload `recover` runs detached with no catch; a failed mkdir/start leaves the band `listening`
+    with no listener. `hooks/register.tsx:262`.
+  - R2 suggestions: duplicated test helpers, `forgetChildren` naming, three names for the VAD threshold.
 
 ## Next step
 The human runs `docs/smoke-test.md` with the microphone and reports failed steps. Not verified yet:
