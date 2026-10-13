@@ -38,6 +38,18 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
 - [x] T3 Mod module `hooks/register.tsx` + state contract `types/index.d.ts`.
 - [x] T4 Tests (`*.test.ts`) and checks: `claude plugin validate`, `tsc -p`, `claude plugin test`.
 
+### v1 hardening (authorized 2026-10-13)
+- [x] T5 `CLAUDE.md`: what the mod is, layout, all checks, dev-run, mod API gotchas.
+- [ ] T6 Correlate live turns by prompt origin (`prompt.submit` hook sees `origin.kind === 'plugin'`,
+  `name === 'live-voice'`), not by matching the raw transcript text. Test-first.
+- [ ] T7 Scope processes per session: a session token in the children's argv, a per-session runtime dir
+  and pause flag; stop/silence kill only this session's children (no global `pkill -f <script>`). Test-first.
+- [ ] T8 Hot-reload recovery: on `session.start`, kill this session's orphaned children; if `$.state` says
+  live was on, resume the listener (product decision: resume, not switch off). Test-first.
+- [ ] T9 Echo-guard tunables: `userConfig` options for the post-playback tail and the VAD thresholds,
+  passed to `listen.py` as flags; defaults unchanged. Test-first (python + engine tests).
+- [ ] T10 Interactive smoke-test checklist for the human (`docs/smoke-test.md`), linked from the README.
+
 ## Acceptance criteria
 - `claude plugin validate .` passes; type-check passes; `claude plugin test .` passes.
 - Helpers run standalone (listen.py prints a WAV path per utterance; speak.sh plays text).
@@ -48,6 +60,11 @@ ask-on-risk. Forecast ~600 authored lines.
 
 ## Routes
 - T1–T4: delegated direct (writer trigger: 2+ non-trivial files).
+- T5: inline (one doc file, already understood). T6–T9: delegated direct (module + tests + types/scripts).
+  T10: inline (one doc file).
+
+## Out of scope (hardening)
+Barge-in, global keybindings, cloud providers.
 
 ## Progress / Evidence
 - T1 done (route: delegated direct). Commit b3c2487. Evidence: `claude plugin validate .` passed with no warnings
