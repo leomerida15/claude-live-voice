@@ -21,7 +21,7 @@ Mark each step pass or fail and note what you heard or saw on a failure.
 - [ ] `claude --plugin-dir .` from the repo root, then `/live`.
 - [ ] The answer is "Live voice on. Speak; voice ef_dora."
 - [ ] The band's audio bar reads `●🎙  m: 🔇 Mute  s: ⏹ Stop  │` and a flat line, the dot blinking;
-  the text bar below reads `listening · ef_dora` with `alt+space mute · alt+s stop` on the right.
+  the text bar below reads `listening · ef_dora` with `alt+m mute · alt+s stop` on the right.
 - [ ] `pgrep -af listen.py` shows exactly one listener, carrying this session's tag.
 
 ## 2. One spoken turn
@@ -77,6 +77,10 @@ Mark each step pass or fail and note what you heard or saw on a failure.
   brings back every default; `Esc` or `Close` closes it. After restarting Claude Code the choices are
   still there. `/live config user pink` answers the usage. On a narrow terminal, if no dialog shows,
   the answer still lists every setting and the commands.
+- [ ] `/live config keys` lists the chords; `/live config mute alt+q` answers `Shortcuts set: alt+q mute · alt+s
+  stop`, `~/.claude/keybindings.json` holds `meta+q` under `Global` with your other bindings intact, and
+  `keybindings.json.live-voice.bak` holds the previous file; `alt+q` at the prompt mutes and the hint shows it.
+  In the dialog, `Shortcuts` Mute/Stop pick a suggested chord the same way. `/live config mute ctrl+c` is refused.
 - [ ] In fullscreen, `/live-config` docks the dialog about 100 columns wide; drag it narrower (~50): no row
   wraps (each R/G/B bar stays on one line with its value and `q: −` `w: +`), fields move to more rows.
 - [ ] `/live config user claude` and `/live config agent #ff8800`: the listening wave takes the theme's Claude

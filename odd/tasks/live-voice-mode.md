@@ -124,6 +124,16 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
   step, preview, animation, silence, Restore, Close. Keys, hotkeys and behavior unchanged; Selects <= 64.
   Test-first: mount at 50 and 100 columns, no drawn row wider than the body, each RGB row one Box holding its
   value, `$.ui.open` called with `columns: 100`.
+- [x] T25 Configurable mute/stop chords (user: the OS takes alt+space, maybe alt+s). The chords live in
+  `~/.claude/keybindings.json`; the mod manages only the bindings whose action is `permission:toggleDebug`
+  (mute) or `footer:dismiss` (stop): removes them in every context, adds the new chords under `Global`, keeps
+  every other binding and field, writes pretty JSON after a one-file backup (`keybindings.json.live-voice.bak`);
+  creates the file when missing; never writes over invalid JSON (answers an error). Pure `checkChord`
+  (ctrl/alt/meta/shift + letter, digit, space, punctuation or f1-f12; ctrl or meta required; alt spelled
+  meta; reserved ctrl+c/d/m/i/[/h/z and the ctrl+x chord prefix refused) and `applyChords`. `/live config
+  keys` shows them, `keys apply` writes them, `mute <chord>` / `stop <chord>` change one (mute != stop).
+  Dialog row with Mute / Stop Selects of suggested chords. Defaults meta+m / meta+s; kept in `$.store`; the
+  band's hint shows the current chords (meta drawn as alt). Only a change writes the file. Test-first.
 
 ## Acceptance criteria
 - `claude plugin validate .` passes; type-check passes; `claude plugin test .` passes.
@@ -144,6 +154,7 @@ ask-on-risk. Forecast ~600 authored lines.
   T19: delegated direct (writer trigger: register.tsx, text.ts, tests, docs).
   T23: delegated direct (writer trigger: register.tsx, text.ts, types, tests, docs).
   T24: delegated direct (writer trigger: register.tsx, text.ts, tests, docs).
+  T25: delegated direct (writer trigger: register.tsx, text.ts, tests, docs).
 
 ## Out of scope (hardening)
 Barge-in, global keybindings, cloud providers.
@@ -435,6 +446,26 @@ Barge-in, global keybindings, cloud providers.
   `Silence ms`, `Close (Esc)`, R/G/B), keys and hotkeys unchanged. Not verified: how the terminal actually
   paints a Select's width and the dock at 100 columns in a live session.
   Commit: see git log (`fix: wider settings dock whose rows fit its width`).
+
+- T25 done (route: delegated direct; writer trigger: register.tsx, text.ts, tests, docs). RED: `claude plugin
+  test .` -> 107 pass, 5 fail (`test/chords.test.ts` did not load: `checkChord`, `applyChords`, ... missing;
+  the four `test/keys.test.tsx` engine tests). GREEN: 119 pass, 0 fail (unit: normalize alt/opt/option to
+  meta and order ctrl, meta, shift; bare, shifted, unknown, f13, multi-key and reserved chords refused; the
+  suggestions pass; defaults meta+m/meta+s; `chordLabel` alt; `liveChords` fallbacks; `applyChords` creates,
+  replaces only the two actions in every context, keeps `$schema` and other bindings, refuses invalid JSON,
+  a wrong shape and a chord another action holds; `parseLiveCommand` keys/keys apply/mute/stop. Engine with a
+  fake fs under HOME: mute rewrite keeps the rest and backs up the old text; invalid JSON is not written, no
+  backup, nothing kept; `keys apply` creates the file; mute == stop refused via `/live-config`; the band hint
+  follows the chords; the dialog's `chord-mute`/`chord-stop` Selects (<= 64, labels alt+...) write on pick).
+  `band.test.tsx` updated for the new default hint (the muted hint now fits at 40 columns, so the narrow
+  check moved to 39). `claude plugin validate .` passed (1 expected CLAUDE.md warning); python 23 OK; `bash -n
+  scripts/speak.sh` ok; tsc no output. Decisions: chords live in a module variable plus `$.store` (`chords`),
+  redrawn with `$.ui.invalidate('ui.render')` (no new `$.state` key: types/ was outside the edit surface);
+  ctrl or meta required (shift+key types); ctrl+x refused (prefix of the engine's chords); ctrl+g left out of
+  the suggestions (Chat's external editor); a chord bound to another action anywhere is refused rather than
+  overwritten; Restore does not touch the chords. Not verified: the file write to the real HOME, Claude
+  Code's live reload of it, and which chords the desktop leaves to the terminal.
+  Commit: see git log (`feat: configurable mute and stop chords in keybindings.json`).
 
 ## Next step
 The human runs `docs/smoke-test.md` with the microphone and reports failed steps. Not verified yet:

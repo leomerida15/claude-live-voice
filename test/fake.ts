@@ -7,13 +7,15 @@ import type { MockClock } from 'claude-code/testing'
 
 export const SESSION_ID = '5f0c2a8e-1b7d-4c3e-9a10-2b3c4d5e6f70'
 export const RUNTIME_DIR = '/run/user/1000'
+export const HOME = '/home/tester'
+export const KEYBINDINGS = `${HOME}/.claude/keybindings.json`
 
 export type World = {
   /** argv of every `$.process.run`, oldest first. */
   runs: string[][]
   /** Every `$.process.spawn` request, oldest first. */
   spawns: ProcessSpawnRequest[]
-  /** What `$.fs.write` wrote last, by path. */
+  /** What `$.fs.write` wrote last, by path; under HOME, also what `$.fs.read` reads and `$.fs.exists` finds. */
   files: Map<string, string>
   /** Prompts that reached the bottom of `prompt.submit`. */
   prompts: PromptSubmitInput[]
@@ -100,11 +102,18 @@ export function fakeWorld(on: On, transcript = 'hola mundo'): World {
     return next(e)
   })
   world.clock = mock.clock(on)
-  mock.env(on, { XDG_RUNTIME_DIR: RUNTIME_DIR })
+  mock.env(on, { XDG_RUNTIME_DIR: RUNTIME_DIR, HOME })
   on('session.id', () => ({ value: SESSION_ID }))
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
-  on('fs.exists', () => ({ value: true }))
+  // The plugin's own files are there; under HOME only what the world holds.
+  on('fs.exists', (_$, e) => ({ value: e.path.startsWith(HOME) ? world.files.has(e.path) : true }))
+  on('fs.read', (_$, e) => {
+    const text = world.files.get(e.path)
+    if (text === undefined) throw new Error(`ENOENT: ${e.path}`)
+
+    return { value: text }
+  })
   on('fs.write', (_$, e) => {
     world.files.set(e.path, e.text)
 

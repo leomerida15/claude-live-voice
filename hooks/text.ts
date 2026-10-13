@@ -100,7 +100,7 @@ export const ANIMATIONS: readonly LiveVoiceAnimation[] = ['wave', 'bars', 'off']
 export const SILENCES: readonly number[] = [1000, 1500, 2000, 2500, 3000]
 
 export const CONFIG_USAGE =
-  `Usage: /live config [reset | test | voice <name> | animation <${ANIMATIONS.join('|')}> | silence <${SILENCES.join('|')}>` +
+  `Usage: /live config [reset | test | voice <name> | animation <${ANIMATIONS.join('|')}> | silence <${SILENCES.join('|')}> | keys [apply] | mute <chord> | stop <chord>` +
   ` | <${COLOR_TARGETS.join('|')}> <color>]; a color is a theme color (${THEME_COLORS.join('|')}),` +
   ` a named color (${COLORS.join('|')}) or #rrggbb`
 
@@ -289,6 +289,9 @@ export type LiveCommand =
   | { kind: 'config-voice'; voice: string }
   | { kind: 'config-animation'; animation: LiveVoiceAnimation }
   | { kind: 'config-silence'; silenceMs: number }
+  | { kind: 'config-keys' }
+  | { kind: 'config-keys-apply' }
+  | { kind: 'config-chord'; which: 'mute' | 'stop'; chord: string }
   | { kind: 'error'; message: string }
 
 const VOICE_NAME = /^[a-z]{1,3}_[a-z0-9]+$/i
@@ -304,6 +307,13 @@ function parseConfig(rest: string[]): LiveCommand {
   if (first === 'animation' && isAnimation(second) && extra.length === 0) return { kind: 'config-animation', animation: second }
   const silenceMs = /^\d+$/.test(second) ? Number(second) : NaN
   if (first === 'silence' && isSilence(silenceMs) && extra.length === 0) return { kind: 'config-silence', silenceMs }
+  if (first === 'keys' && rest.length === 1) return { kind: 'config-keys' }
+  if (first === 'keys' && second === 'apply' && extra.length === 0) return { kind: 'config-keys-apply' }
+  if ((first === 'mute' || first === 'stop') && rest.length === 2) {
+    const checked = checkChord(rest[1] ?? '')
+
+    return 'chord' in checked ? { kind: 'config-chord', which: first, chord: checked.chord } : { kind: 'error', message: `Usage: /live config ${first} <chord>; ${checked.error}.` }
+  }
 
   return { kind: 'error', message: CONFIG_USAGE }
 }
@@ -690,4 +700,170 @@ const CHANNEL_ROW_PARTS = 1 + 3 + 4 + 4 + 4
 /** The cells an R G B bar gets in a row `columns` wide: what is left, 6 to 48. */
 export function channelBarWidth(columns: number): number {
   return Math.min(48, Math.max(6, Math.trunc(columns) - CHANNEL_ROW_PARTS))
+}
+
+/** The band's two chords, as `~/.claude/keybindings.json` spells them (`meta+m`). */
+export type Chords = { mute: string; stop: string }
+
+/** The keybinding actions the band's Mute and Stop buttons borrow (inert in the engine). */
+export const CHORD_ACTIONS: Readonly<Record<keyof Chords, string>> = { mute: 'permission:toggleDebug', stop: 'footer:dismiss' }
+
+/** Alt+M and Alt+S: alt+space, the old suggestion, is often taken by the OS. */
+export const DEFAULT_CHORDS: Chords = { mute: 'meta+m', stop: 'meta+s' }
+
+/** The chords the settings dialog offers; any other goes through `/live config mute|stop <chord>`. */
+export const SUGGESTED_CHORDS: readonly string[] = ['meta+m', 'meta+s', 'meta+space', 'meta+x', 'meta+q', 'ctrl+]', 'ctrl+\\']
+
+const MODIFIERS: Record<string, 'ctrl' | 'meta' | 'shift'> = {
+  ctrl: 'ctrl',
+  control: 'ctrl',
+  alt: 'meta',
+  opt: 'meta',
+  option: 'meta',
+  meta: 'meta',
+  shift: 'shift',
+}
+const MODIFIER_ORDER = ['ctrl', 'meta', 'shift'] as const
+const CHORD_KEY = /^(?:[a-z0-9]|space|f(?:[1-9]|1[0-2])|[`\-=[\]\\;',./])$/
+// What Claude Code never hands a binding (Ctrl+C, D, M, [, I, H), what the
+// terminal takes (Ctrl+Z), and the prefix of the engine's own ctrl+x chords.
+const RESERVED_CHORDS: Record<string, string> = {
+  'ctrl+c': 'reserved: interrupt',
+  'ctrl+d': 'reserved: exit',
+  'ctrl+m': 'reserved: it arrives as Enter',
+  'ctrl+[': 'reserved: it arrives as Escape',
+  'ctrl+i': 'reserved: it arrives as Tab',
+  'ctrl+h': 'reserved: it arrives as Backspace',
+  'ctrl+z': 'reserved: the terminal suspends Claude Code',
+  'ctrl+x': 'taken: the prefix of Claude Code\'s ctrl+x chords',
+}
+
+/**
+ * A chord the band can be bound to, normalized (`alt`, `opt`, `option` are
+ * `meta`; modifiers ordered ctrl, meta, shift), or why it cannot: one or more
+ * modifiers with ctrl or meta among them, then a letter, digit, `space`,
+ * punctuation or f1-f12; never one of the reserved chords.
+ */
+export function checkChord(text: string): { chord: string } | { error: string } {
+  const raw = text.trim().toLowerCase()
+  const usage = 'a chord is modifiers then a key, such as alt+m or ctrl+]: ctrl, alt (meta) or shift, then a letter, digit, space, punctuation or f1-f12'
+  if (raw === '' || /\s/.test(raw)) return { error: `"${text.trim()}" is not one chord: ${usage}` }
+  const parts = raw.endsWith('++') ? [...raw.slice(0, -2).split('+'), '+'] : raw.split('+')
+  const key = parts.pop() ?? ''
+  const modifiers = new Set<string>()
+  for (const part of parts) {
+    const modifier = MODIFIERS[part]
+    if (modifier === undefined || modifiers.has(modifier)) return { error: `"${text.trim()}": ${usage}` }
+    modifiers.add(modifier)
+  }
+  if (!CHORD_KEY.test(key)) return { error: `"${text.trim()}": ${usage}` }
+  if (!modifiers.has('ctrl') && !modifiers.has('meta')) {
+    return { error: `"${text.trim()}" needs ctrl or alt: a bare or shifted key types into the prompt` }
+  }
+  const chord = [...MODIFIER_ORDER.filter(one => modifiers.has(one)), key].join('+')
+  const reserved = RESERVED_CHORDS[chord]
+
+  return reserved === undefined ? { chord } : { error: `${chord} is ${reserved}` }
+}
+
+/** A chord as the person reads it on Linux: `meta` is the Alt key. */
+export function chordLabel(chord: string): string {
+  return chord.replace(/(^|\+)meta(?=\+)/g, '$1alt')
+}
+
+/** The band's hint: `alt+m mute · alt+s stop`. */
+export function chordsHint(chords: Chords): string {
+  return `${chordLabel(chords.mute)} mute · ${chordLabel(chords.stop)} stop`
+}
+
+/** The chords kept in `$.store`: each valid one, the default for the rest; equal ones fall back. */
+export function liveChords(stored: unknown): Chords {
+  const kept = typeof stored === 'object' && stored !== null ? (stored as Record<string, unknown>) : {}
+  const pick = (which: keyof Chords) => {
+    const value = kept[which]
+    const checked = typeof value === 'string' ? checkChord(value) : undefined
+
+    return checked !== undefined && 'chord' in checked ? checked.chord : DEFAULT_CHORDS[which]
+  }
+  const chords = { mute: pick('mute'), stop: pick('stop') }
+
+  return chords.mute === chords.stop ? { ...DEFAULT_CHORDS } : chords
+}
+
+type BindingBlock = { context?: unknown; bindings?: unknown; [field: string]: unknown }
+
+// The file's blocks, or why it is not a keybindings file.
+function bindingBlocks(text: string): { file: Record<string, unknown>; blocks: BindingBlock[] } | { error: string } {
+  let file: unknown
+  try {
+    file = JSON.parse(text)
+  } catch {
+    return { error: 'keybindings.json is not valid JSON; fix it by hand first (nothing was written)' }
+  }
+  if (typeof file !== 'object' || file === null || Array.isArray(file)) {
+    return { error: 'keybindings.json is not an object with a "bindings" array (nothing was written)' }
+  }
+  const record = file as Record<string, unknown>
+  const blocks = record.bindings ?? []
+  if (!Array.isArray(blocks)) return { error: 'keybindings.json "bindings" is not an array (nothing was written)' }
+
+  return { file: record, blocks: blocks as BindingBlock[] }
+}
+
+const isMap = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
+
+/** The band's chords a keybindings file binds now (normalized), when it parses. */
+export function readChords(text: string): Partial<Chords> {
+  const parsed = bindingBlocks(text)
+  if ('error' in parsed) return {}
+  const found: Partial<Chords> = {}
+  for (const block of parsed.blocks) {
+    if (!isMap(block) || !isMap(block.bindings)) continue
+    for (const [keys, action] of Object.entries(block.bindings)) {
+      const which = (Object.keys(CHORD_ACTIONS) as (keyof Chords)[]).find(one => CHORD_ACTIONS[one] === action)
+      const checked = checkChord(keys)
+      if (which !== undefined) found[which] = 'chord' in checked ? checked.chord : keys
+    }
+  }
+
+  return found
+}
+
+/**
+ * A keybindings file (its text, or undefined when there is none) with the
+ * band's chords: every binding to the two actions removed, in any context,
+ * the chords added to the first `Global` block (one is appended when there is
+ * none), everything else kept; pretty JSON. Refuses a file that does not
+ * parse and a chord another action holds.
+ */
+export function applyChords(text: string | undefined, chords: Chords): { text: string } | { error: string } {
+  const parsed = bindingBlocks(text ?? '{"bindings": []}')
+  if ('error' in parsed) return parsed
+  const ours = new Set(Object.values(CHORD_ACTIONS))
+  const wanted = new Set(Object.values(chords))
+  for (const block of parsed.blocks) {
+    if (!isMap(block) || !isMap(block.bindings)) continue
+    for (const [keys, action] of Object.entries(block.bindings)) {
+      if (typeof action === 'string' && ours.has(action)) continue
+      const checked = checkChord(keys)
+      if ('chord' in checked && wanted.has(checked.chord) && action !== null) {
+        return { error: `${chordLabel(checked.chord)} is already bound to ${String(action)} in ${String(block.context)} (nothing was written)` }
+      }
+    }
+  }
+  const blocks = parsed.blocks.map(block => {
+    if (!isMap(block) || !isMap(block.bindings)) return block
+    const kept = Object.fromEntries(Object.entries(block.bindings).filter(([, action]) => !(typeof action === 'string' && ours.has(action))))
+
+    return { ...block, bindings: kept }
+  })
+  const global = blocks.find(block => isMap(block) && block.context === 'Global' && isMap(block.bindings))
+  const added = { [chords.mute]: CHORD_ACTIONS.mute, [chords.stop]: CHORD_ACTIONS.stop }
+  if (global === undefined) {
+    blocks.push({ context: 'Global', bindings: added })
+  } else {
+    global.bindings = { ...(global.bindings as Record<string, unknown>), ...added }
+  }
+
+  return { text: `${JSON.stringify({ ...parsed.file, bindings: blocks }, null, 2)}\n` }
 }

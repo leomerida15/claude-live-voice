@@ -4,31 +4,39 @@ import type { EngineInterface, HookStream, ProcessSpawnChunk, ProcessSpawnResult
 import type { LiveVoiceAnimation, LiveVoiceColor, LiveVoiceColors, LiveVoiceEditor, LiveVoiceSettings, LiveVoiceState, LiveVoiceStatus } from '../types'
 import {
   ANIMATIONS,
+  CHORD_ACTIONS,
   COLORS,
   CONFIG_USAGE,
   COLOR_TARGETS,
+  DEFAULT_CHORDS,
   DEFAULT_COLORS,
   FALLBACK_VOICES,
   SILENCES,
+  SUGGESTED_CHORDS,
   SentenceChunker,
   THEME_COLORS,
   USAGE,
+  applyChords,
   claim,
   audioBarWaveWidth,
   barsRow,
   cellWidth,
   channelBar,
   channelBarWidth,
+  chordLabel,
+  chordsHint,
   cleanTranscript,
   customBase,
   flatRow,
   hexToRgb,
   isVoiced,
   killPattern,
+  liveChords,
   liveColors,
   liveSettings,
   parseColor,
   parseListenerLine,
+  readChords,
   parseLiveCommand,
   packRows,
   safeSessionId,
@@ -47,7 +55,7 @@ import {
   wave as waveFrame,
   waveRow,
 } from './text.ts'
-import type { SubmittedPrompt } from './text.ts'
+import type { Chords, SubmittedPrompt } from './text.ts'
 
 type $ = EngineInterface
 type Child = HookStream<ProcessSpawnChunk, ProcessSpawnResult>
@@ -122,6 +130,8 @@ const live = {
   // Whether the wave moved on the last tick, so its stop is redrawn once.
   wasMoving: false,
   ticker: undefined as Timer | undefined,
+  // The band's mute and stop chords (kept in $.store, bound in keybindings.json).
+  chords: { ...DEFAULT_CHORDS } as Chords,
 }
 
 // Settings and paths, filled by register (options) and session.start (paths).
@@ -622,14 +632,67 @@ const describe = () =>
 // A mod cannot name keybinding actions of its own, so the band borrows two the
 // engine does not act on: a chord the person binds to one in
 // ~/.claude/keybindings.json presses the button from the prompt.
-const MUTE_ACTION = 'permission:toggleDebug'
-const STOP_ACTION = 'footer:dismiss'
+const MUTE_ACTION = CHORD_ACTIONS.mute
+const STOP_ACTION = CHORD_ACTIONS.stop
 
-// The audio bar's separator before the wave, the narrowest wave worth
-// drawing, and the text bar's hint of the chords suggested in the README.
+// The audio bar's separator before the wave and the narrowest wave worth drawing.
 const BAR = '│'
 const MIN_WAVE = 4
-const HINT = 'alt+space mute · alt+s stop'
+
+// Where Claude Code reads the person's chords, and the copy kept before a change.
+const keybindingsPath = async ($: $) => {
+  const home = await $.env.get('HOME')
+
+  return home === undefined || home === '' ? undefined : `${home}/.claude/keybindings.json`
+}
+
+// The keybindings file's text, undefined when there is none, or why it could not be read.
+const readKeybindings = async ($: $, path: string): Promise<{ text: string | undefined } | { error: string }> => {
+  if (!(await $.fs.exists(path).catch(() => false))) return { text: undefined }
+  try {
+    return { text: await $.fs.read(path) }
+  } catch (error) {
+    return { error: `could not read ${path}: ${error instanceof Error ? error.message : String(error)}` }
+  }
+}
+
+// Binds the band's chords in keybindings.json (only the two actions it
+// borrows; the rest of the file is kept, the old one backed up), then keeps
+// them. Answers what happened; an error writes nothing.
+const setChords = async ($: $, chords: Chords): Promise<string> => {
+  if (chords.mute === chords.stop) return `Mute and stop must differ (both ${chordLabel(chords.mute)}).`
+  const path = await keybindingsPath($)
+  if (path === undefined) return 'Could not find HOME, so keybindings.json was not changed.'
+  const before = await readKeybindings($, path)
+  if ('error' in before) return `Could not change the shortcuts: ${before.error}.`
+  const after = applyChords(before.text, chords)
+  if ('error' in after) return `Could not change the shortcuts: ${after.error}.`
+  try {
+    if (before.text !== undefined) await $.fs.write(`${path}.live-voice.bak`, before.text)
+    await $.fs.write(path, after.text)
+  } catch (error) {
+    return `Could not write ${path}: ${error instanceof Error ? error.message : String(error)}.`
+  }
+  live.chords = chords
+  await $.store.set('chords', chords).catch(() => $.ui.toast('live-voice: could not save the shortcuts'))
+  $.ui.invalidate('ui.render')
+
+  return `Shortcuts set: ${chordsHint(chords)} (in ${path}).`
+}
+
+// The chords in use and what keybindings.json binds now.
+const describeKeys = async ($: $) => {
+  const path = await keybindingsPath($)
+  const file = path === undefined ? { error: 'no HOME' } : await readKeybindings($, path)
+  const bound = 'text' in file && file.text !== undefined ? readChords(file.text) : {}
+  const inFile = (which: keyof Chords) => (bound[which] === undefined ? 'not bound' : chordLabel(bound[which]))
+
+  return [
+    `Shortcuts: ${chordsHint(live.chords)}.`,
+    `In keybindings.json: mute ${inFile('mute')}, stop ${inFile('stop')}.`,
+    'Change one with /live config mute <chord> or stop <chord> (alt+m, ctrl+], ...); /live config keys apply writes these.',
+  ].join('\n')
+}
 
 // Answers `/live <args>`; `/live-config <args>` is `/live config <args>`, as a
 // command name cannot hold a colon.
@@ -676,6 +739,12 @@ const answerLive = async ($: $, args: string) => {
     }
     case 'config-test':
       return { text: await testVoice($) }
+    case 'config-keys':
+      return { text: await describeKeys($) }
+    case 'config-keys-apply':
+      return { text: await setChords($, live.chords) }
+    case 'config-chord':
+      return { text: await setChords($, { ...live.chords, [command.which]: command.chord }) }
     case 'config-reset':
       await resetSettings($)
       return { text: 'Settings restored to the defaults.' }
@@ -720,6 +789,7 @@ export const register: Register = (on, options) => {
     await update($, colors, () => liveColors(stored))
     const kept: Record<string, unknown> = {}
     for (const key of STORED) kept[key] = await $.store.get(key).catch(() => undefined)
+    live.chords = liveChords(await $.store.get('chords').catch(() => undefined))
     const loaded = liveSettings(kept, { ...defaults, animation: 'wave' })
     live.voice = loaded.voice
     live.animation = loaded.animation
@@ -730,13 +800,13 @@ export const register: Register = (on, options) => {
     await $.command.register({
       name: 'live',
       description: 'Hands-free voice conversation (local Whisper + Kokoro); /live config: voice, colors, animation, silence',
-      argumentHint: '[on|off|mute|status|voice <name>|config [test|voice <name>|animation <wave|bars|off>|silence <ms>|<target> <theme|name|#hex>|reset]]',
+      argumentHint: '[on|off|mute|status|voice <name>|config [test|voice <name>|animation <wave|bars|off>|silence <ms>|<target> <theme|name|#hex>|keys [apply]|mute <chord>|stop <chord>|reset]]',
       immediate: true,
     })
     await $.command.register({
       name: 'live-config',
-      description: 'Live voice settings: voice, colors, animation, end-of-speech silence',
-      argumentHint: '[test|voice <name>|animation <wave|bars|off>|silence <ms>|<target> <theme|name|#hex>|reset]',
+      description: 'Live voice settings: voice, colors, animation, end-of-speech silence, mute/stop shortcuts',
+      argumentHint: '[test|voice <name>|animation <wave|bars|off>|silence <ms>|<target> <theme|name|#hex>|keys [apply]|mute <chord>|stop <chord>|reset]',
       immediate: true,
     })
 
@@ -829,7 +899,8 @@ export const register: Register = (on, options) => {
     const queued = now.queue > 0 ? ` · ${now.queue} queued` : ''
     const about = `${now.state} · ${now.voice}${queued}`
     // The hint goes first when the text bar is narrow.
-    const hasHint = cellWidth(about) + 2 + cellWidth(HINT) <= columns
+    const hint = chordsHint(live.chords)
+    const hasHint = cellWidth(about) + 2 + cellWidth(hint) <= columns
 
     // The audio bar (dot and mic, the controls, the wave across the rest),
     // then the text bar; with room for one row only, the audio bar, which
@@ -863,7 +934,7 @@ export const register: Register = (on, options) => {
             <Text dimColor wrap="truncate-end">
               {about}
             </Text>
-            {hasHint ? <Text dimColor>{HINT}</Text> : null}
+            {hasHint ? <Text dimColor>{hint}</Text> : null}
           </Box>
         ) : null}
       </Box>
@@ -1078,6 +1149,34 @@ export const register: Register = (on, options) => {
         ),
       },
     ]
+    // The band's chords: the suggestions, and a chord set by hand offered as itself.
+    const chordOptions = (which: keyof Chords) =>
+      selectOptions(
+        [...SUGGESTED_CHORDS, ...(SUGGESTED_CHORDS.includes(live.chords[which]) ? [] : [live.chords[which]])].map(chord => ({
+          value: chord,
+          label: chordLabel(chord),
+        })),
+      )
+    const chordFields: Field[] = (['mute', 'stop'] as const).map(which => {
+      const label = which === 'mute' ? 'Mute' : 'Stop'
+
+      return {
+        width: selectWidth(label, chordOptions(which)),
+        node: (
+          <Select
+            key={`chord-${which}`}
+            label={label}
+            options={chordOptions(which)}
+            value={live.chords[which]}
+            onSelect={async (value: string) => {
+              if (!chordOptions(which).some(option => option.value === value)) return
+              const answer = await setChords($, { ...live.chords, [which]: value })
+              if (!answer.startsWith('Shortcuts set')) $.ui.toast(`live-voice: ${answer}`)
+            }}
+          />
+        ),
+      }
+    })
     const actionFields: Field[] = [
       { width: cellWidth('Restore'), node: <Button key="restore" plain label="Restore" onPress={() => void resetSettings($)} /> },
       { width: cellWidth(closeLabel), node: <Button key="close" plain label={closeLabel} onPress={() => void $.ui.close({ id: CONFIG_PANE })} /> },
@@ -1101,6 +1200,7 @@ export const register: Register = (on, options) => {
         ))}
         {pack('step', stepFields)}
         {pack('timing', timingFields)}
+        {pack('chords', [{ width: cellWidth('Shortcuts'), node: <Text key="chords-label">Shortcuts</Text> }, ...chordFields])}
         {pack('actions', actionFields)}
       </Box>
     )

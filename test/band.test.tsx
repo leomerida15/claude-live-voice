@@ -48,7 +48,7 @@ const WIDE = BAND.props.bodyColumns - 30
 const FLAT = new RegExp(`^▁{${WIDE}}$`)
 // Every frame of the speaking wave at the band's width.
 const WAVES = Array.from({ length: 8 }, (_, frame) => waveRow(frame, WIDE))
-const HINT = 'alt+space mute · alt+s stop'
+const HINT = 'alt+m mute · alt+s stop'
 
 // Hears one utterance and runs the live turn it starts, its reply held playing.
 async function liveTurn($: Engine, world: World) {
@@ -173,8 +173,9 @@ test('the audio bar holds the blinking mic, then the plain controls, then a wave
   expect((await waveOf(ui))?.props).toMatchObject({ dimColor: true, color: 'gray' })
 
   // Narrow: the hint goes first; then the wave shrinks, and goes under 4 cells; the controls stay.
-  await ui.redraw({ ...BAND.props, bodyColumns: 40 })
+  await ui.redraw({ ...BAND.props, bodyColumns: 39 })
   expect(await ui.find({ type: 'Text', text: HINT })).toBeUndefined()
+  await ui.redraw({ ...BAND.props, bodyColumns: 40 })
   expect(await meterOf(ui)).toBe('▁'.repeat(9))
   // 31 cells muted, 4 for the narrowest wave: one cell less and the wave goes.
   await ui.redraw({ ...BAND.props, bodyColumns: 34 })

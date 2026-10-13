@@ -66,31 +66,47 @@ Claude speaks with, in green, so you can see the mic hears you; while Claude
 speaks it is that wave in cyan; otherwise it is a flat dim gray line. The colors and the animation can be changed (see Live settings).
 
 The **text bar** below reads `<state> · <voice>`, plus `N queued` while
-sentences wait to be spoken, with the suggested chords on the right
-(`alt+space mute · alt+s stop`). The state is `listening`, `transcribing`,
+sentences wait to be spoken, with the current mute and stop chords on the
+right (`alt+m mute · alt+s stop` by default). The state is `listening`, `transcribing`,
 `thinking`, `speaking` or `muted`. In a narrow terminal the chord hint goes
 first, then the wave shrinks; the controls are never cut.
 
 Focus the band with `ctrl+x tab`, then press `m` to mute or unmute, or `s` to
 stop speaking.
 
-To mute or stop straight from the prompt, bind chords in
+To mute or stop straight from the prompt, chords are bound in
 `~/.claude/keybindings.json`. A mod cannot define its own keybinding actions,
 so the band's buttons borrow two that Claude Code does not act on:
 `permission:toggleDebug` presses Mute and `footer:dismiss` presses Stop.
 
+Pick the chords from the settings dialog (`Shortcuts  Mute ▾  Stop ▾`) or with
+`/live config mute <chord>` and `/live config stop <chord>` (defaults `alt+m`
+and `alt+s`; many desktops take `alt+space`). `/live config keys` shows the
+chords and what the file binds; `/live config keys apply` writes the current
+ones. Claude Code reloads the file on its own.
+
+The mod edits only those two entries: it removes every binding to
+`permission:toggleDebug` or `footer:dismiss`, in any context, adds the new
+chords under `Global`, and keeps every other binding and field. Before each
+write it copies the old file to `keybindings.json.live-voice.bak`; a missing
+file is created. A file that is not valid JSON, or a chord another action
+already holds, is never overwritten: the answer says why. The file is written
+only when you change a chord, never on its own.
+
 ```json
 {
   "bindings": [
-    { "context": "Global", "bindings": { "meta+space": "permission:toggleDebug", "meta+s": "footer:dismiss" } }
+    { "context": "Global", "bindings": { "meta+m": "permission:toggleDebug", "meta+s": "footer:dismiss" } }
   ]
 }
 ```
 
-`meta` is Alt on Linux. Use a chord or a modified key: a bare letter does not
-reach the band. `ctrl+m` is Enter in a terminal, and many desktops keep
-`Super+Space` for themselves. If a chord does nothing, run `claude --debug` to
-see binding warnings, or try the `Chat` context.
+`meta` is Alt on Linux (the hint shows it as `alt`). A chord needs `ctrl` or
+`alt` plus a letter, digit, `space`, punctuation or f1-f12: a bare or shifted
+key types into the prompt. Reserved chords are refused (`ctrl+c`, `ctrl+d`,
+`ctrl+m`, `ctrl+i`, `ctrl+[`, `ctrl+h`, `ctrl+z`, and `ctrl+x`, the prefix of
+Claude Code's own chords). If a chord does nothing, run `claude --debug` to see
+binding warnings.
 
 Press `Esc` while Claude answers to interrupt the turn. That also stops playback
 and drops the sentences still waiting to be spoken.
@@ -114,6 +130,7 @@ answers with every current setting and the commands that change them.
 | Animation | `wave` (a line bouncing with the sound), `bars` (the same, as bars) or `off` (a still dim line). | `wave` |
 | End silence | 1000-3000 ms of silence that ends what you say; a change restarts the listener. | `vadEndSilenceMs` below |
 | Colors | The band's colors, below. | |
+| Shortcuts | The mute and stop chords, written to `~/.claude/keybindings.json` (see above). `Restore` leaves them as they are. | `alt+m`, `alt+s` |
 
 ### Colors
 
