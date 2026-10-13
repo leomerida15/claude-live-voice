@@ -39,10 +39,10 @@ const waveOf = async (ui: Ui) => (await ui.findAll({ type: 'Text' })).find(one =
 const meterOf = async (ui: Ui) => (await waveOf(ui))?.text
 // The audio bar's first Text: the live dot and the mic.
 const micOf = async (ui: Ui) => await ui.find({ type: 'Text' })
-// bodyColumns less the dot and mic (4 cells), `m: 🔇 Mute` (10), `s: ⏹ Stop`
+// bodyColumns less the dot and mic (3 cells), `m: 🔇 Mute` (10), `s: ⏹ Stop`
 // (10), the `│` (1), a gap after each of the four (4) and the margin (2).
-// Muted, `🔇` (2) and `m: 🎙 Unmute` (12) take the same 14.
-const WIDE = BAND.props.bodyColumns - 31
+// Muted, `🔇` (2) and `m: 🎙 Unmute` (12) take one cell more.
+const WIDE = BAND.props.bodyColumns - 30
 const flat = '▁'.repeat(WIDE)
 const HINT = 'alt+space mute · alt+s stop'
 
@@ -127,16 +127,17 @@ test('the audio bar holds the blinking mic, then the plain controls, then a wave
   expect(stop?.props).toMatchObject({ plain: true, hotkey: 's', action: 'footer:dismiss', label: '⏹ Stop' })
   const bars = await ui.findAll({ type: 'Box' })
   // The band, then its audio bar (dot and mic, Mute, Stop, the bar, the wave), then the text bar.
-  expect(bars[1]?.text).toMatch(/^(🔴| {2})🎙🔇 Mute⏹ Stop│▁+$/u)
+  expect(bars[1]?.text).toMatch(/^(●| )🎙🔇 Mute⏹ Stop│▁+$/u)
   expect(bars[2]?.text).toBe(`listening · ef_dora${HINT}`)
   expect(await meterOf(ui)).toBe(flat)
 
-  // The dot blinks while on: lit and dark across a blink.
-  const before = (await micOf(ui))?.text.includes('🔴')
+  // The dot blinks while on, in the dot color: lit and dark across a blink.
+  expect((await micOf(ui))?.props.color).toBe('red')
+  const before = (await micOf(ui))?.text.includes('●')
   await settle(world, 500)
-  expect((await micOf(ui))?.text.includes('🔴')).toBe(!before)
+  expect((await micOf(ui))?.text.includes('●')).toBe(!before)
   await settle(world, 500)
-  expect((await micOf(ui))?.text.includes('🔴')).toBe(before)
+  expect((await micOf(ui))?.text.includes('●')).toBe(before)
 
   // Muted: a steady red muted mic, no dot, a flat dim wave, and nothing redraws.
   await ui.press({ key: 'mute' })
@@ -147,15 +148,15 @@ test('the audio bar holds the blinking mic, then the plain controls, then a wave
   const muted = world.stateWrites()
   await settle(world, 2_000)
   expect(world.stateWrites()).toBe(muted)
-  expect(await meterOf(ui)).toBe(flat)
-  expect((await waveOf(ui))?.props).toMatchObject({ dimColor: true })
-  expect((await waveOf(ui))?.props.color).toBeUndefined()
+  expect(await meterOf(ui)).toBe('▁'.repeat(WIDE - 1))
+  expect((await waveOf(ui))?.props).toMatchObject({ dimColor: true, color: 'gray' })
 
   // Narrow: the hint goes first; then the wave shrinks, and goes under 4 cells; the controls stay.
   await ui.redraw({ ...BAND.props, bodyColumns: 40 })
   expect(await ui.find({ type: 'Text', text: HINT })).toBeUndefined()
   expect(await meterOf(ui)).toBe('▁'.repeat(9))
-  await ui.redraw({ ...BAND.props, bodyColumns: 33 })
+  // 31 cells muted, 4 for the narrowest wave: one cell less and the wave goes.
+  await ui.redraw({ ...BAND.props, bodyColumns: 34 })
   expect(await meterOf(ui)).toBeUndefined()
   expect(await ui.find({ key: 'mute' })).toBeDefined()
   expect(await ui.find({ key: 'stop' })).toBeDefined()
@@ -202,7 +203,7 @@ test('a long run of levels keeps the meter as wide as the band and the history b
   world.levels(...Array.from({ length: 500 }, () => 1))
   await settle(world)
   expect(await meterOf(ui)).toBe('█'.repeat(WIDE))
-  await ui.redraw({ ...BAND.props, bodyColumns: 331 })
+  await ui.redraw({ ...BAND.props, bodyColumns: 330 })
   // History is capped at 200 levels: a wider band pads the rest on the left.
   expect(await meterOf(ui)).toBe(`${'▁'.repeat(100)}${'█'.repeat(200)}`)
   await ui.unmount()

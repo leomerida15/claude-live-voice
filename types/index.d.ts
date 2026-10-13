@@ -17,8 +17,18 @@ export type LiveVoiceStatus = {
   dot: boolean
 }
 
+/** A color the band takes: one of the terminal's named colors. */
+export type LiveVoiceColor = 'red' | 'green' | 'yellow' | 'blue' | 'magenta' | 'cyan' | 'white' | 'gray'
+
+/**
+ * The band's colors, set with `/live config` and kept in `$.store` under
+ * `colors`: the wave while the person speaks (`user`) and while Claude speaks
+ * (`agent`), the live dot and the muted mic (`dot`), the flat line (`idle`).
+ */
+export type LiveVoiceColors = { user: LiveVoiceColor; agent: LiveVoiceColor; dot: LiveVoiceColor; idle: LiveVoiceColor }
+
 declare module 'claude-code' {
   interface PluginState {
-    'live-voice': { status: LiveVoiceStatus }
+    'live-voice': { status: LiveVoiceStatus; colors: LiveVoiceColors }
   }
 }

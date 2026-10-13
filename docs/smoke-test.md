@@ -20,7 +20,7 @@ Mark each step pass or fail and note what you heard or saw on a failure.
 
 - [ ] `claude --plugin-dir .` from the repo root, then `/live`.
 - [ ] The answer is "Live voice on. Speak; voice ef_dora."
-- [ ] The band's audio bar reads `🔴🎙  m: 🔇 Mute  s: ⏹ Stop  │` and a flat line, the dot blinking;
+- [ ] The band's audio bar reads `●🎙  m: 🔇 Mute  s: ⏹ Stop  │` and a flat line, the dot blinking;
   the text bar below reads `listening · ef_dora` with `alt+space mute · alt+s stop` on the right.
 - [ ] `pgrep -af listen.py` shows exactly one listener, carrying this session's tag.
 
@@ -63,6 +63,10 @@ Mark each step pass or fail and note what you heard or saw on a failure.
 - [ ] `Esc` during a spoken reply aborts the turn, stops playback at once and drops the queue.
 - [ ] `/live voice em_alex`, ask something: the new voice is used. `/live status` reports it.
 - [ ] `/live status` reports state, voice and queue.
+- [ ] `/live config agent magenta`: the answer is "agent color set to magenta." and the next spoken
+  reply's wave is magenta. `/live config` opens the colors dialog; picking a color changes the band at
+  once; `Restore` brings back green/cyan/red/gray; `Esc` or `Close` closes it. After restarting Claude
+  Code the chosen colors are still there. `/live config user pink` answers the usage.
 
 ## 7. Two sessions (process scoping)
 

@@ -1,8 +1,12 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, HookStream, ProcessSpawnChunk, ProcessSpawnResult, Register, Timer } from 'claude-code'
 
-import type { LiveVoiceState, LiveVoiceStatus } from '../types'
+import type { LiveVoiceColors, LiveVoiceState, LiveVoiceStatus } from '../types'
 import {
+  COLORS,
+  CONFIG_USAGE,
+  COLOR_TARGETS,
+  DEFAULT_COLORS,
   SentenceChunker,
   USAGE,
   claim,
@@ -11,6 +15,7 @@ import {
   cleanTranscript,
   flatRow,
   killPattern,
+  liveColors,
   METER_CAP,
   meterRow,
   parseListenerLine,
@@ -27,6 +32,16 @@ type Child = HookStream<ProcessSpawnChunk, ProcessSpawnResult>
 
 const OFF: LiveVoiceStatus = { isOn: false, state: 'off', queue: 0, voice: '', levels: [], wave: 0, dot: false }
 const status = atom({ plugin: 'live-voice', key: 'status' } as const, OFF)
+const colors = atom({ plugin: 'live-voice', key: 'colors' } as const, DEFAULT_COLORS)
+
+// The colors dialog's pane, and what each of its Selects is labelled.
+const COLORS_PANE = 'live-voice-colors'
+const COLOR_LABELS: Record<keyof LiveVoiceColors, string> = {
+  user: 'You speaking   ',
+  agent: 'Claude speaking',
+  dot: 'Live dot       ',
+  idle: 'Idle line      ',
+}
 
 const STT_TIMEOUT_MS = 60_000
 // The band's clock while live voice is on: the speaking wave moves one frame
@@ -362,6 +377,16 @@ const stop = async ($: $) => {
   await silence($)
 }
 
+// Shows new colors at once and keeps them for later sessions.
+const setColors = async ($: $, next: LiveVoiceColors) => {
+  await update($, colors, () => next)
+  await $.store.set('colors', next).catch(() => $.ui.toast('live-voice: could not save the colors'))
+}
+
+// A pick in the colors dialog: over the colors as they are now, not as drawn.
+const pickColor = async ($: $, target: keyof LiveVoiceColors, color: LiveVoiceColors[keyof LiveVoiceColors]) =>
+  setColors($, { ...liveColors(await read($, colors)), [target]: color })
+
 const describe = () =>
   live.isOn
     ? `Live voice is on: ${stateNow()}, voice ${live.voice}, ${live.queue.length} sentence(s) queued.`
@@ -400,12 +425,14 @@ export const register: Register = (on, options) => {
     // A hot reload runs this again: the module started over, $.state did not.
     const was = await read($, status)
     forgetChildren()
+    const stored = await $.store.get('colors').catch(() => undefined)
+    await update($, colors, () => liveColors(stored))
     await update($, status, () => (was.isOn ? { ...was, queue: 0 } : { ...OFF, voice: live.voice }))
     $.clock.after(0, () => void recover($, was))
     await $.command.register({
       name: 'live',
       description: 'Hands-free voice conversation (local Whisper + Kokoro)',
-      argumentHint: '[on|off|mute|status|voice <name>]',
+      argumentHint: '[on|off|mute|status|voice <name>|config [reset|<target> <color>]]',
       immediate: true,
     })
 
@@ -446,6 +473,15 @@ export const register: Register = (on, options) => {
         live.voice = command.voice
         await publish($)
         return { text: `Voice set to ${command.voice}.` }
+      case 'config':
+        await $.ui.open({ id: COLORS_PANE, title: 'Live voice colors', focus: true, closeOnEscape: true, rows: 8 })
+        return { text: 'Live voice colors opened.' }
+      case 'config-reset':
+        await setColors($, DEFAULT_COLORS)
+        return { text: 'Colors restored to the defaults.' }
+      case 'config-set':
+        await pickColor($, command.target, command.color)
+        return { text: `${command.target} color set to ${command.color}.` }
       case 'error':
         return { text: command.message || USAGE }
     }
@@ -500,20 +536,22 @@ export const register: Register = (on, options) => {
     if (!now.isOn || !live.isOn || e.props.hasSurvey) {
       return next(e)
     }
+    const palette = liveColors(await read($, colors))
     const { Box, Button, Text } = $.ui.resolve(e)
     const columns = e.props.bodyColumns
     // A state from before a reload may lack the levels; the next publish fills them.
     const levels = Array.isArray(now.levels) ? now.levels : []
     // The live dot (blank while dark, so nothing shifts) then the mic; muted,
-    // a steady red muted mic.
-    const mic = live.isMuted ? '🔇' : `${now.dot === true ? '🔴' : '  '}🎙`
+    // a steady muted mic. Both in the dot color: a glyph, as an emoji keeps its own.
+    const mic = live.isMuted ? '🔇' : `${now.dot === true ? '●' : ' '}🎙`
     const muteLabel = live.isMuted ? '🎙 Unmute' : '🔇 Mute'
     const stopLabel = '⏹ Stop'
     const width = audioBarWaveWidth(columns, [mic, `m: ${muteLabel}`, `s: ${stopLabel}`, BAR])
     const wave =
       now.state === 'listening' ? meterRow(levels, width) : now.state === 'speaking' ? waveRow(now.wave ?? 0, width) : flatRow(width)
-    // Who is talking: the person green, the agent cyan, nobody dim.
-    const waveColor = now.state === 'listening' ? 'green' : now.state === 'speaking' ? 'cyan' : undefined
+    // Who is talking: the person, Claude, or nobody (dim).
+    const isIdle = now.state !== 'listening' && now.state !== 'speaking'
+    const waveColor = now.state === 'listening' ? palette.user : now.state === 'speaking' ? palette.agent : palette.idle
     const queued = now.queue > 0 ? ` · ${now.queue} queued` : ''
     const about = `${now.state} · ${now.voice}${queued}`
     // The hint goes first when the text bar is narrow.
@@ -525,7 +563,7 @@ export const register: Register = (on, options) => {
     return (
       <Box flexDirection="column">
         <Box flexDirection="row" gap={1}>
-          <Text color={live.isMuted ? 'red' : undefined}>{mic}</Text>
+          <Text color={palette.dot}>{mic}</Text>
           <Button
             key="mute"
             plain
@@ -541,7 +579,7 @@ export const register: Register = (on, options) => {
           <Button key="stop" plain hotkey="s" action={STOP_ACTION} label={stopLabel} onPress={() => void silence($)} />
           <Text dimColor>{BAR}</Text>
           {width >= MIN_WAVE ? (
-            <Text color={waveColor} dimColor={waveColor === undefined} wrap="truncate-end">
+            <Text color={waveColor} dimColor={isIdle} wrap="truncate-end">
               {wave}
             </Text>
           ) : null}
@@ -554,6 +592,50 @@ export const register: Register = (on, options) => {
             {hasHint ? <Text dimColor>{HINT}</Text> : null}
           </Box>
         ) : null}
+      </Box>
+    )
+  })
+
+  on('ui.render', { component: 'Pane', requestId: COLORS_PANE }, async ($, e) => {
+    const elements = $.ui.resolve(e)
+    const { Box, Button, Text } = elements
+    const now = liveColors(await read($, colors))
+    // A surface with no Select (mobile) gets the colors and the command instead.
+    if (!('Select' in elements)) {
+      return (
+        <Box flexDirection="column">
+          {COLOR_TARGETS.map(target => (
+            <Text>
+              {COLOR_LABELS[target]} {now[target]}
+            </Text>
+          ))}
+          <Text dimColor>{CONFIG_USAGE}</Text>
+        </Box>
+      )
+    }
+    const { Select } = elements
+    const options = COLORS.map(color => ({ value: color }))
+
+    return (
+      <Box flexDirection="column">
+        <Text dimColor>The band's colors, kept for later sessions.</Text>
+        {COLOR_TARGETS.map((target, index) => (
+          <Select
+            key={`color-${target}`}
+            label={`${COLOR_LABELS[target]} `}
+            options={options}
+            value={now[target]}
+            autoFocus={index === 0 ? true : undefined}
+            onSelect={(value: string) => {
+              const color = COLORS.find(one => one === value)
+              if (color !== undefined) void pickColor($, target, color)
+            }}
+          />
+        ))}
+        <Box flexDirection="row" gap={2}>
+          <Button key="restore" plain label="Restore" onPress={() => void setColors($, DEFAULT_COLORS)} />
+          <Button key="close" plain label="Close" onPress={() => void $.ui.close({ id: COLORS_PANE })} />
+        </Box>
       </Box>
     )
   })

@@ -47,15 +47,18 @@ claude --plugin-dir /path/to/claude-live-voice
 | `/live mute` | Mutes or unmutes the microphone. Replies are still spoken. |
 | `/live voice <name>` | Changes the Kokoro voice, for example `ef_dora` or `em_alex`. |
 | `/live status` | Shows the current state, the voice and the queue. |
+| `/live config` | Opens a small dialog to pick the band's colors. |
+| `/live config <user\|agent\|dot\|idle> <color>` | Sets one color directly, for example `/live config agent magenta`. |
+| `/live config reset` | Restores the default colors. |
 
 While live mode is on, a band of two rows sits above the prompt.
 
-The **audio bar** reads `🔴🎙  m: 🔇 Mute  s: ⏹ Stop  │ ▁▁▃▅█▇▃▁…`: a red dot that
+The **audio bar** reads `●🎙  m: 🔇 Mute  s: ⏹ Stop  │ ▁▁▃▅█▇▃▁…`: a red dot that
 blinks while the microphone is live (a steady red `🔇` while muted), the Mute and
 Stop controls, then a wave across the rest of the band. While listening the wave
 is the live microphone level, newest on the right, in green, so you can see the
 mic hears you; while Claude speaks it is a moving cyan wave; otherwise it is a
-flat dim line.
+flat dim gray line. The colors can be changed (see Colors).
 
 The **text bar** below reads `<state> · <voice>`, plus `N queued` while
 sentences wait to be spoken, with the suggested chords on the right
@@ -90,6 +93,23 @@ and drops the sentences still waiting to be spoken.
 Only replies to prompts you spoke are read aloud. Prompts you type are answered
 as usual, in silence. Code blocks are never read: the mod says "código omitido"
 once instead.
+
+## Colors
+
+`/live config` opens a dialog with one picker per color, plus `Restore` (the
+defaults) and `Close`; `Esc` closes it too. Changes show on the band at once
+and are kept for later sessions.
+
+| Color | Colors | Default |
+| --- | --- | --- |
+| `user` | The wave while you speak (the microphone meter). | `green` |
+| `agent` | The wave while Claude speaks. | `cyan` |
+| `dot` | The blinking live dot and the muted mic. | `red` |
+| `idle` | The flat line while muted, transcribing or thinking. | `gray` |
+
+The colors are the terminal's named ones: `red`, `green`, `yellow`, `blue`,
+`magenta`, `cyan`, `white`, `gray`. The live dot is `●`, not an emoji, so it
+can take a color.
 
 ## Settings
 

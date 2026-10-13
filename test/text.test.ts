@@ -2,6 +2,10 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import {
   CODE_OMITTED,
+  CONFIG_USAGE,
+  DEFAULT_COLORS,
+  USAGE,
+  liveColors,
   audioBarWaveWidth,
   cellWidth,
   SentenceChunker,
@@ -45,6 +49,27 @@ describe('parseLiveCommand', () => {
     expect(parseLiveCommand('voice em_alex')).toEqual({ kind: 'voice', voice: 'em_alex' })
     expect(parseLiveCommand('voice').kind).toBe('error')
     expect(parseLiveCommand('voice ../../etc').kind).toBe('error')
+  })
+
+  test('config opens the colors, resets them or sets one', () => {
+    expect(parseLiveCommand('config')).toEqual({ kind: 'config' })
+    expect(parseLiveCommand('config reset')).toEqual({ kind: 'config-reset' })
+    expect(parseLiveCommand('CONFIG Agent Magenta')).toEqual({ kind: 'config-set', target: 'agent', color: 'magenta' })
+    expect(parseLiveCommand('config idle gray')).toEqual({ kind: 'config-set', target: 'idle', color: 'gray' })
+  })
+
+  test('a bad config target or color answers the usage with the valid values', () => {
+    for (const args of ['config agent', 'config mic red', 'config user pink', 'config user red extra', 'config reset now']) {
+      const parsed = parseLiveCommand(args)
+      expect(parsed.kind).toBe('error')
+      expect(parsed.kind === 'error' && parsed.message).toBe(CONFIG_USAGE)
+    }
+    expect(CONFIG_USAGE).toContain('user|agent|dot|idle')
+    expect(CONFIG_USAGE).toContain('red|green|yellow|blue|magenta|cyan|white|gray')
+  })
+
+  test('the usage names config', () => {
+    expect(USAGE).toContain('config')
   })
 
   test('anything else is an error naming the usage', () => {
@@ -226,6 +251,7 @@ describe('meter', () => {
   test('cellWidth counts emoji as two cells and joiners as none', () => {
     expect(cellWidth('Mute')).toBe(4)
     expect(cellWidth('🎙🔴')).toBe(4)
+    expect(cellWidth('●🎙')).toBe(3)
     expect(cellWidth('m: 🔇 Mute')).toBe(10)
     expect(cellWidth('s: ⏹ Stop')).toBe(10)
     expect(cellWidth('⏹\uFE0F')).toBe(2)
@@ -237,6 +263,14 @@ describe('meter', () => {
     expect(audioBarWaveWidth(100, ['🔴🎙', 'm: 🔇 Mute', 's: ⏹ Stop', '│'])).toBe(69)
     expect(audioBarWaveWidth(100, ['ab'], 0, 0)).toBe(98)
     expect(audioBarWaveWidth(10, ['🔴🎙', 'm: 🔇 Mute'])).toBe(0)
+  })
+
+  test('liveColors keeps the valid stored colors and defaults the rest', () => {
+    expect(liveColors(undefined)).toEqual(DEFAULT_COLORS)
+    expect(DEFAULT_COLORS).toEqual({ user: 'green', agent: 'cyan', dot: 'red', idle: 'gray' })
+    expect(liveColors({ user: 'blue', agent: 'pink', dot: 7 })).toEqual({ ...DEFAULT_COLORS, user: 'blue' })
+    expect(liveColors('red')).toEqual(DEFAULT_COLORS)
+    expect(liveColors([1])).toEqual(DEFAULT_COLORS)
   })
 
   test('METER_CAP bounds the kept history', () => {

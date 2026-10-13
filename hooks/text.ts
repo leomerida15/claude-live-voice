@@ -1,7 +1,35 @@
 // Pure text helpers of the live-voice mod: command parsing, transcript
 // filtering, markdown stripping and sentence chunking for speech.
 
-export const USAGE = 'Usage: /live [on|off|mute|status|voice <name>]'
+import type { LiveVoiceColor, LiveVoiceColors } from '../types'
+
+export const USAGE = 'Usage: /live [on|off|mute|status|voice <name>|config]'
+
+/** What `/live config` can color, in the order the dialog lists them. */
+export const COLOR_TARGETS = ['user', 'agent', 'dot', 'idle'] as const
+export type ColorTarget = (typeof COLOR_TARGETS)[number]
+
+/** The terminal's named colors the band offers. */
+export const COLORS: readonly LiveVoiceColor[] = ['red', 'green', 'yellow', 'blue', 'magenta', 'cyan', 'white', 'gray']
+
+export const DEFAULT_COLORS: LiveVoiceColors = { user: 'green', agent: 'cyan', dot: 'red', idle: 'gray' }
+
+export const CONFIG_USAGE = `Usage: /live config [reset | <${COLOR_TARGETS.join('|')}> <${COLORS.join('|')}>]`
+
+const isTarget = (value: string): value is ColorTarget => (COLOR_TARGETS as readonly string[]).includes(value)
+const isColor = (value: unknown): value is LiveVoiceColor => typeof value === 'string' && (COLORS as readonly string[]).includes(value)
+
+/** Colors read back from the store: each valid one kept, anything else its default. */
+export function liveColors(value: unknown): LiveVoiceColors {
+  const stored = typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
+  const colors = { ...DEFAULT_COLORS }
+  for (const target of COLOR_TARGETS) {
+    const color = stored[target]
+    if (isColor(color)) colors[target] = color
+  }
+
+  return colors
+}
 
 /** Said once per reply in place of its code blocks. */
 export const CODE_OMITTED = 'código omitido'
@@ -13,12 +41,25 @@ export type LiveCommand =
   | { kind: 'mute' }
   | { kind: 'status' }
   | { kind: 'voice'; voice: string }
+  | { kind: 'config' }
+  | { kind: 'config-reset' }
+  | { kind: 'config-set'; target: ColorTarget; color: LiveVoiceColor }
   | { kind: 'error'; message: string }
 
 const VOICE_NAME = /^[a-z]{1,3}_[a-z0-9]+$/i
 
+function parseConfig(rest: string[]): LiveCommand {
+  const [first = '', second = '', ...extra] = rest.map(word => word.toLowerCase())
+  if (rest.length === 0) return { kind: 'config' }
+  if (first === 'reset' && rest.length === 1) return { kind: 'config-reset' }
+  if (isTarget(first) && isColor(second) && extra.length === 0) return { kind: 'config-set', target: first, color: second }
+
+  return { kind: 'error', message: CONFIG_USAGE }
+}
+
 export function parseLiveCommand(args: string): LiveCommand {
-  const [head = '', voice] = args.trim().split(/\s+/).filter(Boolean)
+  const [head = '', ...rest] = args.trim().split(/\s+/).filter(Boolean)
+  const [voice] = rest
 
   switch (head.toLowerCase()) {
     case '':
@@ -28,6 +69,8 @@ export function parseLiveCommand(args: string): LiveCommand {
     case 'mute':
     case 'status':
       return { kind: head.toLowerCase() as 'on' | 'off' | 'mute' | 'status' }
+    case 'config':
+      return parseConfig(rest)
     case 'voice':
       return voice !== undefined && VOICE_NAME.test(voice)
         ? { kind: 'voice', voice }

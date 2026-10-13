@@ -28,6 +28,10 @@ export type World = {
   stateWrites: () => number
   /** The text the model streams for the next turn.step. */
   reply: { text: string }
+  /** The plugin's `$.store`, kept across sessions: seed it to stand for an earlier one. */
+  store: Map<string, unknown>
+  /** The ids of the panes the plugin opened, oldest first. */
+  opened: string[]
 }
 
 /**
@@ -67,6 +71,8 @@ export function fakeWorld(on: On, transcript = 'hola mundo'): World {
     },
     stateWrites: () => stateWrites,
     reply: { text: '' },
+    store: new Map(),
+    opened: [],
   }
   on('state.set', (_$, e, next) => {
     stateWrites += 1
@@ -83,6 +89,17 @@ export function fakeWorld(on: On, transcript = 'hola mundo'): World {
     world.files.set(e.path, e.text)
 
     return { value: undefined }
+  })
+  on('store.get', (_$, e) => ({ value: world.store.get(e.key) }))
+  on('store.set', (_$, e) => {
+    world.store.set(e.key, JSON.parse(JSON.stringify(e.value)))
+
+    return { value: undefined }
+  })
+  on('ui.open', (_$, e) => {
+    world.opened.push(e.id)
+
+    return { value: { isPlaced: true as const } }
   })
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
   on('process.run', (_$, e) => {

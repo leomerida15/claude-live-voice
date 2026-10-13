@@ -70,6 +70,13 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
   first, then the wave shrinks (omitted under 4 cells); controls never cut. History capped at 200
   levels, appended only while listening (R3-002). Test-first (engine + helpers).
 
+- [x] T14 `/live config` colors (authorized 2026-10-13): `user` (wave while the person speaks, default
+  green), `agent` (wave while Claude speaks, default cyan), `dot` (blinking dot, default red), `idle` (flat
+  line, default gray), persisted in `$.store` across sessions, loaded on session.start, read by the band.
+  `/live config` opens a dialog pane with one Select per color, Restore and Close; changes apply live.
+  `/live config <user|agent|dot|idle> <color>` sets one; `/live config reset` restores defaults; bad input
+  answers the usage with the valid values. Parser in `hooks/text.ts` with unit tests; engine tests.
+
 ## Acceptance criteria
 - `claude plugin validate .` passes; type-check passes; `claude plugin test .` passes.
 - Helpers run standalone (listen.py prints a WAV path per utterance; speak.sh plays text).
@@ -83,6 +90,7 @@ ask-on-risk. Forecast ~600 authored lines.
 - T5: inline (one doc file, already understood). T6–T9: delegated direct (module + tests + types/scripts).
   T10: inline (one doc file). T12: delegated direct (writer trigger: listen.py, register.tsx, text.ts, tests).
   T13: delegated direct (writer trigger: register.tsx, text.ts, types, tests).
+  T14: delegated direct (writer trigger: register.tsx, text.ts, types, tests).
 
 ## Out of scope (hardening)
 Barge-in, global keybindings, cloud providers.
@@ -227,9 +235,29 @@ Barge-in, global keybindings, cloud providers.
   made "levels heard while not listening do not reach the next meter" fail (`▁…███` vs a flat row).
   GREEN: `claude plugin test .` 52 pass, 0 fail; python 15 OK; `claude plugin validate .` passed (one
   expected CLAUDE.md warning); `tsc -p <scratchpad tsconfig>` no output; `bash -n scripts/speak.sh` ok.
-  Commit: this commit. Not verified: real terminal cell widths of `🎙`/`⏹` (counted 2, margin 2), the
+  Commit: d70b00a. Not verified: real terminal cell widths of `🎙`/`⏹` (counted 2, margin 2), the
   plain Button's drawn `m: ` prefix width (counted 3; the test kit's text omits it), colors and blink in
   a live terminal (smoke test).
+
+- T14 done (route: delegated direct; register.tsx + text.ts + types + tests + docs). `hooks/text.ts`:
+  `COLOR_TARGETS`, `COLORS` (red green yellow blue magenta cyan white gray), `DEFAULT_COLORS`,
+  `CONFIG_USAGE`, `liveColors(stored)` (valid fields kept, the rest defaulted), and `parseLiveCommand`
+  learns `config`, `config reset`, `config <target> <color>` (case-insensitive; anything else answers
+  `CONFIG_USAGE`). A new `$.state` key `colors` (declared in `types/index.d.ts`) holds the colors; they
+  are loaded from `$.store` key `colors` on session.start (a failed read keeps the defaults) and written to
+  both on every change (a failed store write toasts). `/live config` opens pane `live-voice-colors`
+  (`focus`, `closeOnEscape`, 8 rows) with one Select per color, `Restore` and `Close`; a surface with no
+  Select (mobile) shows the colors and the usage. The band's wave takes `user`/`agent`/`idle` (idle stays
+  dim), the dot and the muted mic take `dot`; the dot is now `●` (an emoji keeps its own color), one cell.
+  No manifest change was needed (`$.store` needs no contract).
+  RED: `claude plugin test .` -> text.test.ts failed to load (`CONFIG_USAGE` missing), 4 new config
+  engine tests and 4 band tests failed (fake store/pane handlers added, `●` dot widths). GREEN: 60 pass,
+  0 fail; python 15 OK; `claude plugin validate .` passed (one expected CLAUDE.md warning); `tsc -p
+  <scratchpad tsconfig>` no output (after narrowing `Select`, absent on mobile); `bash -n` ok.
+  The test kit covers the shortcut, reset, invalid input, colors kept from an earlier session (a seeded
+  fake store), the pane's four Selects, a pick persisting, and Restore. Not covered: the pane's placement
+  and focus, Escape closing it, pressing Close (only its presence), real persistence across a restart.
+  Commit: this commit.
 
 ## Next step
 The human runs `docs/smoke-test.md` with the microphone and reports failed steps. Not verified yet:
