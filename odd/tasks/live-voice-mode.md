@@ -143,6 +143,11 @@ Barge-in, global keybindings, cloud providers.
   silence splits two utterances the default joins, 20 start frames ignore a 0.4 s burst, factor 8 ignores a quiet
   voice over a 200 rms floor, bad values refused); engine 38 pass / 0 fail (incl. `tunable` unit tests).
   `claude plugin validate .` passed (pre-existing CLAUDE.md warning); tsc no errors; `bash -n` ok.
+  Commit aec8393.
+- Follow-up for CLAUDE.md (outside T6–T9's edit surface): the gotcha "its `prompt.submit` hooks see
+  `origin: { kind: 'plugin', ... }`" holds for other plugins' hooks; the plugin's own hook does not run for its own
+  `$.prompt.submit` (test kit). Engine tests need `{ value }`-wrapped answers for `$` nouns and ~1 s of real time
+  per mocked-clock advance while a stream is open (hence `timeoutMs: 30_000`).
 
 ## Next step
 Manual acceptance in an interactive session: `claude --plugin-dir <repo>`, `/live`, speak a question.
