@@ -56,6 +56,11 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
   `footer:dismiss` for stop), so a chord the user binds in `~/.claude/keybindings.json` (suggested
   `meta+space`, `meta+s`) presses them from the prompt. A mod cannot define its own action names.
   Docs: README and smoke test. Test-first where the test kit can press a Button by action.
+- [x] T12 Live voice meter in the band (authorized 2026-10-13, user chose the real meter over a canned
+  animation): `listen.py` prints throttled `level <0..1>` lines (about 8 per second) beside the WAV paths
+  while listening; the mod keeps a short history and the band draws it as a sparkline (`▁▂▃▅▇`) while
+  listening; while speaking, a looping wave animation driven by `$.clock`, stopped when speech ends.
+  Redraw rate bounded; no level lines while paused. Test-first (python + engine).
 
 ## Acceptance criteria
 - `claude plugin validate .` passes; type-check passes; `claude plugin test .` passes.
@@ -68,7 +73,7 @@ ask-on-risk. Forecast ~600 authored lines.
 ## Routes
 - T1–T4: delegated direct (writer trigger: 2+ non-trivial files).
 - T5: inline (one doc file, already understood). T6–T9: delegated direct (module + tests + types/scripts).
-  T10: inline (one doc file).
+  T10: inline (one doc file). T12: delegated direct (writer trigger: listen.py, register.tsx, text.ts, tests).
 
 ## Out of scope (hardening)
 Barge-in, global keybindings, cloud providers.
@@ -176,6 +181,19 @@ Barge-in, global keybindings, cloud providers.
   (`Expected: "permission:toggleDebug"`, `Received: undefined` on the Mute button). GREEN: 39 pass, 0 fail.
   `claude plugin validate .` passed (expected CLAUDE.md warning); `tsc -p <scratchpad tsconfig>` no errors.
   Not verified: that the user's chord reaches the band in a live terminal (in the smoke test).
+- T12 done (route: delegated direct; listen.py + register.tsx + text.ts + types + tests). `listen.py` prints
+  `level <0..1>` every 4 frames (120 ms, ~8/s): the window's peak RMS as `log(peak/ref)/log(100)`,
+  `ref = max(floor, 50)`, clamped; none while paused or before calibration; `--no-levels` turns them off.
+  The mod keeps 8 levels, publishes `status.meter` (sparkline while listening, wave frame while speaking,
+  else '') only when the drawn meter changes, at most once per stdout chunk; a `$.clock.every(150)` wave
+  timer starts with playback and is cancelled at its end, on Stop, `/live off` and a reload.
+  RED: python 15 tests -> 2 fail (levels printed, `--no-levels`); `claude plugin test .` -> load failure on
+  the missing helpers, then 43 pass / 2 fail for the band tests (no meter; no wave redraws), also 2 fail
+  against the pre-change `register.tsx`, and 2 fail with `stopWave` mutated into a leak.
+  GREEN: python 15 OK; `claude plugin test .` 45 pass, 0 fail; `claude plugin validate .` passed (expected
+  CLAUDE.md warning); `tsc -p <scratchpad tsconfig>` no output; `bash -n scripts/speak.sh` ok. Standalone:
+  a Kokoro speech WAV fed via `--stdin` reads `0.00` over the room and `0.25-0.94` over the voice.
+  Commit: this commit. Not verified: the meter with a real microphone and terminal (smoke test).
 
 ## Next step
 The human runs `docs/smoke-test.md` with the microphone and reports failed steps. Not verified yet:

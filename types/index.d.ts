@@ -5,6 +5,8 @@ export type LiveVoiceStatus = {
   state: LiveVoiceState
   queue: number
   voice: string
+  /** What the band's meter shows: the mic level sparkline while listening, the wave while speaking, else ''. */
+  meter: string
 }
 
 declare module 'claude-code' {

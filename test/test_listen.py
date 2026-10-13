@@ -43,7 +43,8 @@ class ListenTest(unittest.TestCase):
                 pathlib.Path(flag).write_text(pause)
                 args += ["--pause-file", flag]
             done = subprocess.run(args, input=audio, capture_output=True, timeout=30, check=True)
-            paths = done.stdout.decode().split()
+            lines = done.stdout.decode().splitlines()
+            paths = [line for line in lines if not line.startswith("level ")]
             infos = []
             for path in paths:
                 with wave.open(path, "rb") as wav:
@@ -78,6 +79,34 @@ class ListenTest(unittest.TestCase):
     def test_session_tag_is_accepted_and_ignored(self):
         paths, _ = self.run_listener(pcm(silence(1.0), tone(1.0), silence(1.5)), extra=("--tag", "live-voice-abc"))
         self.assertEqual(len(paths), 1)
+
+
+class LevelTest(unittest.TestCase):
+    def levels(self, audio, pause=None, extra=()):
+        with tempfile.TemporaryDirectory() as tmp:
+            args = [sys.executable, "-I", str(SCRIPT), "--stdin", "--dir", tmp, *extra]
+            if pause is not None:
+                flag = os.path.join(tmp, "paused")
+                pathlib.Path(flag).write_text(pause)
+                args += ["--pause-file", flag]
+            done = subprocess.run(args, input=audio, capture_output=True, timeout=30, check=True)
+            return [float(line.split()[1]) for line in done.stdout.decode().splitlines() if line.startswith("level ")]
+
+    def test_levels_are_printed_while_listening(self):
+        levels = self.levels(pcm(silence(1.0), tone(1.0), silence(1.0)))
+        # About 8 a second after the 0.5 s calibration: 2.5 s of audio -> ~16.
+        self.assertGreaterEqual(len(levels), 12)
+        self.assertLessEqual(len(levels), 22)
+        self.assertTrue(all(0.0 <= level <= 1.0 for level in levels))
+        # The quiet room reads low and the voice high.
+        self.assertLess(levels[0], 0.2)
+        self.assertGreater(max(levels), 0.7)
+
+    def test_no_levels_while_paused(self):
+        self.assertEqual(self.levels(pcm(silence(1.0), tone(1.0), silence(1.0)), pause="1"), [])
+
+    def test_no_levels_flag_turns_them_off(self):
+        self.assertEqual(self.levels(pcm(silence(1.0), tone(1.0), silence(1.0)), extra=("--no-levels",)), [])
 
 
 class TunablesTest(unittest.TestCase):

@@ -3,7 +3,8 @@
 
 Reads 16 kHz mono S16_LE PCM from `arecord` (or stdin with --stdin), and for
 each utterance writes one WAV file into --dir and prints its absolute path on
-its own line. While the --pause-file holds "1", audio is discarded (half-duplex
+its own line. While listening it also prints `level <0..1>` lines, about 8 a
+second, for a live meter (--no-levels turns them off). While the --pause-file holds "1", audio is discarded (half-duplex
 while the reply is spoken, or muted). Standard library only.
 """
 
@@ -35,6 +36,9 @@ START_RATIO = 3.0
 END_RATIO = 0.6
 MIN_START_RMS = 300.0
 PAUSE_CHECK_S = 0.1
+LEVEL_FRAMES = 4  # one level line per 4 frames (120 ms): about 8 a second
+LEVEL_FLOOR_MIN = 50.0  # RMS below which the room counts as silent
+LEVEL_SPAN = 100.0  # how far over the floor (40 dB) a full meter is
 
 
 def frames_for(ms):
@@ -96,13 +100,14 @@ class Detector:
         return max((self.floor or 0.0) * self.start_ratio, MIN_START_RMS)
 
     def feed(self, frame):
+        """Takes one frame; returns its RMS."""
         level = rms(frame)
         if self.floor is None:
             self.calibration.append(level)
             if len(self.calibration) >= frames_for(CALIBRATION_MS):
                 ordered = sorted(self.calibration)
                 self.floor = ordered[len(ordered) // 2]
-            return
+            return level
         start = self.threshold()
         if not self.speaking:
             self.pre_roll.append(frame)
@@ -117,7 +122,7 @@ class Detector:
             else:
                 self.loud_run = 0
                 self.floor = 0.95 * self.floor + 0.05 * level
-            return
+            return level
         self.frames.append(frame)
         if level > start * END_RATIO:
             self.speech_frames += 1
@@ -126,12 +131,45 @@ class Detector:
             self.silent_run += 1
         if self.silent_run >= frames_for(self.end_silence_ms) or len(self.frames) >= frames_for(MAX_UTTERANCE_MS):
             self.finish()
+        return level
 
     def finish(self):
         if self.speaking and self.speech_frames >= frames_for(MIN_SPEECH_MS):
             trailing = max(0, self.silent_run - frames_for(KEEP_SILENCE_MS))
             kept = self.frames[: len(self.frames) - trailing]
             self.on_utterance(b"".join(kept))
+        self.reset()
+
+
+class Meter:
+    """Prints `level <0..1>` every LEVEL_FRAMES frames: the loudest frame of the
+    window on a log scale over the calibrated noise floor,
+
+        level = clamp(log(peak / ref) / log(LEVEL_SPAN), 0, 1),  ref = max(floor, LEVEL_FLOOR_MIN)
+
+    so the quiet room reads about 0, speech at the default start threshold
+    (3x the floor) about 0.24, and normal speech (30-100x the floor) 0.7-1.
+    Nothing is printed before the floor is calibrated."""
+
+    def __init__(self, enabled=True):
+        self.enabled = enabled
+        self.reset()
+
+    def reset(self):
+        self.count = 0
+        self.peak = 0.0
+
+    def feed(self, level, floor):
+        if not self.enabled or floor is None:
+            return
+        self.count += 1
+        self.peak = max(self.peak, level)
+        if self.count < LEVEL_FRAMES:
+            return
+        ref = max(floor, LEVEL_FLOOR_MIN)
+        value = math.log(max(self.peak, ref) / ref) / math.log(LEVEL_SPAN)
+        sys.stdout.write("level %.2f\n" % min(1.0, value))
+        sys.stdout.flush()
         self.reset()
 
 
@@ -193,6 +231,7 @@ def parse_args(argv):
         default=START_RATIO,
         help="how far over the calibrated noise floor speech must be",
     )
+    parser.add_argument("--no-levels", action="store_true", help="do not print `level` lines for a meter")
     parser.add_argument("--tag", default=None, help="session tag; ignored, it lets the caller find this process")
     return parser.parse_args(argv)
 
@@ -219,6 +258,7 @@ def main(argv=None):
         start_ratio=args.threshold_factor,
     )
     pause = PauseFlag(args.pause_file)
+    meter = Meter(enabled=not args.no_levels)
     try:
         while True:
             frame = source.read(FRAME_BYTES)
@@ -226,8 +266,9 @@ def main(argv=None):
                 break
             if pause.is_paused():
                 detector.reset()
+                meter.reset()
                 continue
-            detector.feed(frame)
+            meter.feed(detector.feed(frame), detector.floor)
         detector.finish()
     except KeyboardInterrupt:
         pass

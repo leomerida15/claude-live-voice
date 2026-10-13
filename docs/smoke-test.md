@@ -27,6 +27,8 @@ Mark each step pass or fail and note what you heard or saw on a failure.
 
 - [ ] Say a short question, for example "¿Qué hora es en Madrid?".
 - [ ] The band goes `transcribing` -> `thinking` -> `speaking`, then back to `listening`.
+- [ ] While `listening`, the meter next to the state rises as you talk and falls flat in silence; while
+  `speaking` it shows a moving wave that stops when the reply ends.
 - [ ] The prompt shown in the transcript is what you said.
 - [ ] The reply is spoken sentence by sentence, starting before Claude finishes writing.
 - [ ] The band shows `N queued` while sentences wait.

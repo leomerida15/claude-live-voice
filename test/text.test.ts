@@ -6,10 +6,14 @@ import {
   claim,
   cleanTranscript,
   killPattern,
+  levelGlyph,
+  parseListenerLine,
   parseLiveCommand,
   sessionTag,
+  sparkline,
   stripMarkdown,
   tunable,
+  wave,
 } from '../hooks/text.ts'
 
 const speakAll = (pieces: string[]) => {
@@ -163,5 +167,44 @@ describe('tunable', () => {
     for (const bad of [Number.NaN, 0, -3, Number.POSITIVE_INFINITY, '', 'loud', undefined, true]) {
       expect(tunable(bad, 800)).toBe(800)
     }
+  })
+})
+
+describe('meter', () => {
+  test('parseListenerLine tells level lines from WAV paths', () => {
+    expect(parseListenerLine('level 0.42')).toEqual({ kind: 'level', value: 0.42 })
+    expect(parseListenerLine(' level 1.00 ')).toEqual({ kind: 'level', value: 1 })
+    expect(parseListenerLine('level 7')).toEqual({ kind: 'level', value: 1 })
+    expect(parseListenerLine('/run/user/1000/live-voice/utt-1.wav')).toEqual({
+      kind: 'wav',
+      path: '/run/user/1000/live-voice/utt-1.wav',
+    })
+    expect(parseListenerLine('')).toBeUndefined()
+    expect(parseListenerLine('level nan')).toBeUndefined()
+    expect(parseListenerLine('level -1')).toBeUndefined()
+    expect(parseListenerLine('relative.wav')).toBeUndefined()
+  })
+
+  test('levelGlyph maps 0..1 to the eight block heights', () => {
+    expect(levelGlyph(0)).toBe('▁')
+    expect(levelGlyph(0.5)).toBe('▅')
+    expect(levelGlyph(0.4)).toBe('▄')
+    expect(levelGlyph(1)).toBe('█')
+    expect(levelGlyph(-3)).toBe('▁')
+    expect(levelGlyph(9)).toBe('█')
+  })
+
+  test('sparkline draws the newest levels, padded on the left to its width', () => {
+    expect(sparkline([], 4)).toBe('▁▁▁▁')
+    expect(sparkline([1, 0.5], 4)).toBe('▁▁█▅')
+    expect(sparkline([0, 0, 0, 0, 0, 1], 4)).toBe('▁▁▁█')
+    expect(sparkline([0.3])).toHaveLength(8)
+  })
+
+  test('wave loops through its frames at a fixed width', () => {
+    expect(wave(0)).toHaveLength(8)
+    expect(wave(1)).not.toBe(wave(0))
+    expect(wave(8)).toBe(wave(0))
+    expect(wave(-1)).toBe(wave(7))
   })
 })

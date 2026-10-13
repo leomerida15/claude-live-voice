@@ -50,8 +50,10 @@ claude --plugin-dir /path/to/claude-live-voice
 
 While live mode is on, a band above the prompt shows
 `🎙 live · <state>`, where the state is `listening`, `transcribing`, `thinking`,
-`speaking` or `muted`. The band also shows how many sentences are waiting to be
-spoken and which voice is in use. Focus the band with `ctrl+x tab`, then press
+`speaking` or `muted`. Next to the state is a small meter: while listening it is
+the live microphone level of the last second (`▁▁▃▅█▇▃▁`), so you can see the mic
+hears you; while Claude speaks it is a looping wave. The band also shows how many
+sentences are waiting to be spoken and which voice is in use. Focus the band with `ctrl+x tab`, then press
 `m` to mute or unmute, or `s` to stop speaking.
 
 To mute or stop straight from the prompt, bind chords in

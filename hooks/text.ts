@@ -222,3 +222,50 @@ export class SentenceChunker {
     speakable(rest, out)
   }
 }
+
+/** A line of listen.py's stdout: a meter level (0..1) or an utterance's WAV path. */
+export type ListenerLine = { kind: 'level'; value: number } | { kind: 'wav'; path: string }
+
+const LEVEL_LINE = /^level\s+(\S+)$/
+
+/** Reads one listener line; anything else (blank, malformed, a relative path) is undefined. */
+export function parseListenerLine(line: string): ListenerLine | undefined {
+  const text = line.trim()
+  const level = LEVEL_LINE.exec(text)
+  if (level !== null) {
+    const value = Number(level[1])
+
+    return Number.isFinite(value) && value >= 0 ? { kind: 'level', value: Math.min(1, value) } : undefined
+  }
+
+  return text.startsWith('/') ? { kind: 'wav', path: text } : undefined
+}
+
+const BLOCKS = '▁▂▃▄▅▆▇█'
+const LOWEST = '▁'
+
+/** Width of the band's meter, in cells. */
+export const METER_WIDTH = 8
+
+/** A level (clamped to 0..1) as one of eight block heights. */
+export function levelGlyph(level: number): string {
+  const clamped = Math.min(1, Math.max(0, Number.isFinite(level) ? level : 0))
+
+  return BLOCKS[Math.round(clamped * (BLOCKS.length - 1))] ?? LOWEST
+}
+
+/** The newest `width` levels as blocks, oldest left, padded with the lowest block. */
+export function sparkline(levels: readonly number[], width = METER_WIDTH): string {
+  const glyphs = levels.slice(-width).map(levelGlyph).join('')
+
+  return LOWEST.repeat(Math.max(0, width - glyphs.length)) + glyphs
+}
+
+const WAVE = '▂▃▅▇▅▃▂▁'
+
+/** Frame `tick` of the looping speaking wave: the wave shape rotated one cell per tick. */
+export function wave(tick: number): string {
+  const shift = ((Math.trunc(tick) % WAVE.length) + WAVE.length) % WAVE.length
+
+  return WAVE.slice(shift) + WAVE.slice(0, shift)
+}

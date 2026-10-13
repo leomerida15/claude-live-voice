@@ -20,6 +20,12 @@ export type World = {
   clock: MockClock
   /** The listener prints this WAV path, as if an utterance was heard. */
   hear: (wav: string) => void
+  /** The listener prints these meter levels, as it does while listening. */
+  levels: (...values: number[]) => void
+  /** While true, speak.sh children play until `release` is called. */
+  playback: { hold: boolean; release: () => void }
+  /** How many `$.state` writes the plugin made: an idle mod makes none. */
+  stateWrites: () => number
   /** The text the model streams for the next turn.step. */
   reply: { text: string }
 }
@@ -35,18 +41,39 @@ export async function settle(world: World, ms = 400) {
 export function fakeWorld(on: On, transcript = 'hola mundo'): World {
   const heard: string[] = []
   let wake = () => {}
+  let releases: (() => void)[] = []
+  let stateWrites = 0
   const world: World = {
     runs: [],
     spawns: [],
     files: new Map(),
     prompts: [],
-    clock: mock.clock(on),
+    clock: undefined as unknown as MockClock,
     hear: wav => {
       heard.push(wav)
       wake()
     },
+    levels: (...values) => {
+      heard.push(...values.map(value => `level ${value.toFixed(2)}`))
+      wake()
+    },
+    playback: {
+      hold: false,
+      release: () => {
+        const held = releases
+        releases = []
+        for (const release of held) release()
+      },
+    },
+    stateWrites: () => stateWrites,
     reply: { text: '' },
   }
+  on('state.set', (_$, e, next) => {
+    stateWrites += 1
+
+    return next(e)
+  })
+  world.clock = mock.clock(on)
   mock.env(on, { XDG_RUNTIME_DIR: RUNTIME_DIR })
   on('session.id', () => ({ value: SESSION_ID }))
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
@@ -77,6 +104,9 @@ export function fakeWorld(on: On, transcript = 'hola mundo'): World {
         }
         yield { stream: 'stdout' as const, text: `${wav}\n` }
       }
+    }
+    if (world.playback.hold && e.argv.some(arg => arg.endsWith('speak.sh'))) {
+      await new Promise<void>(resolve => releases.push(resolve))
     }
 
     return { value: { code: 0, signal: null } }

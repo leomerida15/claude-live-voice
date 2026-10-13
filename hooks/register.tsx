@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, HookStream, ProcessSpawnChunk, ProcessSpawnResult, Register } from 'claude-code'
+import type { EngineInterface, HookStream, ProcessSpawnChunk, ProcessSpawnResult, Register, Timer } from 'claude-code'
 
 import type { LiveVoiceState, LiveVoiceStatus } from '../types'
 import {
@@ -7,21 +7,27 @@ import {
   USAGE,
   claim,
   cleanTranscript,
+  METER_WIDTH,
   killPattern,
+  parseListenerLine,
   parseLiveCommand,
   safeSessionId,
   sessionTag,
+  sparkline,
   tunable,
+  wave,
 } from './text.ts'
 import type { SubmittedPrompt } from './text.ts'
 
 type $ = EngineInterface
 type Child = HookStream<ProcessSpawnChunk, ProcessSpawnResult>
 
-const OFF: LiveVoiceStatus = { isOn: false, state: 'off', queue: 0, voice: '' }
+const OFF: LiveVoiceStatus = { isOn: false, state: 'off', queue: 0, voice: '', meter: '' }
 const status = atom({ plugin: 'live-voice', key: 'status' } as const, OFF)
 
 const STT_TIMEOUT_MS = 60_000
+// One frame of the speaking wave per period: about 7 redraws a second.
+const WAVE_MS = 150
 
 // Runtime state of the loop. Children die with the module on a reload, so
 // this living in the module (not in $.state) loses nothing that survives.
@@ -38,6 +44,13 @@ const live = {
   prompts: [] as SubmittedPrompt[],
   // Live turns by id, each with the chunker of its spoken reply.
   turns: new Map<string, SentenceChunker>(),
+  // The newest mic levels (0..1) from listen.py, for the meter.
+  levels: [] as number[],
+  // The speaking wave's frame and the timer that moves it.
+  waveTick: 0,
+  waveTimer: undefined as Timer | undefined,
+  // The meter as last published, so an unchanged one is not redrawn.
+  meter: '',
 }
 
 // Settings and paths, filled by register (options) and session.start (paths).
@@ -69,13 +82,44 @@ const stateNow = (): LiveVoiceState => {
   return 'listening'
 }
 
-const publish = ($: $) =>
-  update($, status, () => ({
+const meterNow = (state: LiveVoiceState) =>
+  state === 'listening' ? sparkline(live.levels) : state === 'speaking' ? wave(live.waveTick) : ''
+
+const publish = ($: $) => {
+  const state = stateNow()
+  // Levels heard before a pause (speech, mute, an utterance) are stale after it.
+  if (state !== 'listening') live.levels = []
+  live.meter = meterNow(state)
+
+  return update($, status, () => ({
     isOn: live.isOn,
-    state: stateNow(),
+    state,
     queue: live.queue.length,
     voice: live.voice,
+    meter: live.meter,
   }))
+}
+
+// Keeps the newest levels; redraws only when the meter, as drawn, changed.
+const hearLevels = async ($: $, levels: number[]) => {
+  live.levels = [...live.levels, ...levels].slice(-METER_WIDTH)
+  const state = stateNow()
+  if (state === 'listening' && meterNow(state) !== live.meter) await publish($)
+}
+
+const startWave = ($: $) => {
+  live.waveTimer?.cancel()
+  live.waveTick = 0
+  live.waveTimer = $.clock.every(WAVE_MS, () => {
+    live.waveTick += 1
+    if (stateNow() === 'speaking') void publish($)
+  })
+}
+
+const stopWave = () => {
+  live.waveTimer?.cancel()
+  live.waveTimer = undefined
+}
 
 // The listener discards audio while the flag file holds "1".
 const writePause = ($: $) =>
@@ -139,20 +183,29 @@ const transcribe = async ($: $, wav: string) => {
   }
 }
 
-// Reads the listener's stdout: one WAV path per line, lines split across chunks.
+// Reads the listener's stdout, lines split across chunks: a WAV path per
+// utterance, and meter levels (about 8 a second). The levels of one chunk
+// make at most one redraw, so the meter redraws no faster than they come.
 const listen = async ($: $, child: Child) => {
   let pending = ''
   try {
     for await (const chunk of child) {
       if (chunk.stream !== 'stdout') continue
       pending += chunk.text
+      let levels: number[] = []
       let newline = pending.indexOf('\n')
       while (newline >= 0) {
-        const wav = pending.slice(0, newline).trim()
+        const line = parseListenerLine(pending.slice(0, newline))
         pending = pending.slice(newline + 1)
-        if (wav !== '') await transcribe($, wav)
+        if (line?.kind === 'level') {
+          levels.push(line.value)
+        } else if (line?.kind === 'wav') {
+          await transcribe($, line.path)
+          levels = []
+        }
         newline = pending.indexOf('\n')
       }
+      if (levels.length > 0) await hearLevels($, levels)
     }
   } catch {
     // The child was stopped or failed; handled below.
@@ -169,6 +222,7 @@ const listen = async ($: $, child: Child) => {
 const speakNext = async ($: $) => {
   if (live.isSpeaking) return
   live.isSpeaking = true
+  startWave($)
   await writePause($)
   await publish($)
   while (live.isOn && live.queue.length > 0) {
@@ -193,6 +247,7 @@ const speakNext = async ($: $) => {
     }
     live.player = undefined
   }
+  stopWave()
   await $.clock.sleep(config.echoTailMs).catch(() => undefined)
   live.isSpeaking = false
   if (live.isOn) await writePause($)
@@ -211,6 +266,7 @@ const enqueue = ($: $, sentences: string[]) => {
 
 const silence = async ($: $) => {
   live.queue = []
+  stopWave()
   const player = live.player
   live.player = undefined
   if (player !== undefined) {
@@ -255,6 +311,8 @@ const forgetChildren = () => {
   live.isSpeaking = false
   live.prompts = []
   live.turns.clear()
+  live.levels = []
+  stopWave()
 }
 
 // After session.start: kills this session's orphaned children, then, when
@@ -418,11 +476,13 @@ export const register: Register = (on, options) => {
     }
     const { Box, Button, Text } = $.ui.resolve(e)
     const queued = now.queue > 0 ? ` · ${now.queue} queued` : ''
+    const meter = now.meter ?? ''
 
     return (
       <Box>
         <Text>
           🎙 live · <Text bold>{now.state}</Text>
+          {meter !== '' ? <Text color="cyan"> {meter}</Text> : null}
           <Text dimColor>{queued} · {now.voice} </Text>
         </Text>
         <Button
