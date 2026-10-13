@@ -1,0 +1,105 @@
+// The world beneath the live-voice mod in engine tests: processes, files,
+// the session id, the clock and the model's reply, all in memory.
+
+import type { On, ProcessSpawnRequest, PromptSubmitInput } from 'claude-code'
+import { mock } from 'claude-code/testing'
+import type { MockClock } from 'claude-code/testing'
+
+export const SESSION_ID = '5f0c2a8e-1b7d-4c3e-9a10-2b3c4d5e6f70'
+export const RUNTIME_DIR = '/run/user/1000'
+
+export type World = {
+  /** argv of every `$.process.run`, oldest first. */
+  runs: string[][]
+  /** Every `$.process.spawn` request, oldest first. */
+  spawns: ProcessSpawnRequest[]
+  /** What `$.fs.write` wrote last, by path. */
+  files: Map<string, string>
+  /** Prompts that reached the bottom of `prompt.submit`. */
+  prompts: PromptSubmitInput[]
+  clock: MockClock
+  /** The listener prints this WAV path, as if an utterance was heard. */
+  hear: (wav: string) => void
+  /** The text the model streams for the next turn.step. */
+  reply: { text: string }
+}
+
+/**
+ * Lets pending work run: detached hook work and the pause after playback
+ * (`ms` of mocked time).
+ */
+export async function settle(world: World, ms = 400) {
+  await world.clock.advance(ms)
+}
+
+export function fakeWorld(on: On, transcript = 'hola mundo'): World {
+  const heard: string[] = []
+  let wake = () => {}
+  const world: World = {
+    runs: [],
+    spawns: [],
+    files: new Map(),
+    prompts: [],
+    clock: mock.clock(on),
+    hear: wav => {
+      heard.push(wav)
+      wake()
+    },
+    reply: { text: '' },
+  }
+  mock.env(on, { XDG_RUNTIME_DIR: RUNTIME_DIR })
+  on('session.id', () => ({ value: SESSION_ID }))
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  on('session.end', (_$, e) => ({ sessionId: e.sessionId }))
+  on('fs.exists', () => ({ value: true }))
+  on('fs.write', (_$, e) => {
+    world.files.set(e.path, e.text)
+
+    return { value: undefined }
+  })
+  on('command.register', (_$, e) => ({ value: { command: e.name } }))
+  on('process.run', (_$, e) => {
+    world.runs.push([...e.argv])
+    const stdout = e.argv[0] === 'curl' ? JSON.stringify({ text: transcript }) : ''
+
+    return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on('process.spawn', async function* (_$, e) {
+    world.spawns.push(e)
+    if (e.argv.some(arg => arg.endsWith('listen.py'))) {
+      for (;;) {
+        const wav = heard.shift()
+        if (wav === undefined) {
+          await new Promise<void>(resolve => {
+            wake = resolve
+          })
+          continue
+        }
+        yield { stream: 'stdout' as const, text: `${wav}\n` }
+      }
+    }
+
+    return { value: { code: 0, signal: null } }
+  })
+  on('prompt.submit', (_$, e) => {
+    world.prompts.push(e)
+
+    return { text: e.text, origin: e.origin }
+  })
+  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  on('turn.complete', (_$, e) => ({ text: e.answer }))
+  on('turn.step', async function* (_$, e) {
+    yield { kind: 'text' as const, index: 0, text: world.reply.text }
+
+    return {
+      turnId: e.turnId,
+      index: e.index,
+      answer: world.reply.text,
+      toolUses: [],
+      stopReason: 'end_turn' as const,
+      usage: null,
+    }
+  })
+
+  return world
+}

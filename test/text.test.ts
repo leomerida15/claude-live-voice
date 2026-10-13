@@ -3,6 +3,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import {
   CODE_OMITTED,
   SentenceChunker,
+  claim,
   cleanTranscript,
   parseLiveCommand,
   stripMarkdown,
@@ -104,5 +105,30 @@ describe('SentenceChunker', () => {
 
   test('drops pieces with nothing to say', () => {
     expect(speakAll(['---\n\n***\nHola\n'])).toEqual(['Hola'])
+  })
+})
+
+describe('claim', () => {
+  const sent = (text: string, entered?: string, isEntering = false) => ({ sent: text, entered, isEntering })
+
+  test('a turn holding the rewritten text claims its prompt', () => {
+    const prompt = sent('hola', 'hola (rewritten)')
+    expect(claim([prompt], 'hola (rewritten)')).toBe(prompt)
+  })
+
+  test('merged queued prompts claim the oldest they hold', () => {
+    const first = sent('hola', 'hola')
+    const second = sent('adiós', 'adiós')
+    expect(claim([first, second], 'hola\nadiós')).toBe(first)
+  })
+
+  test('a turn starting while its prompt is entering claims it', () => {
+    const prompt = sent('hola', undefined, true)
+    expect(claim([prompt], 'translated beyond recognition')).toBe(prompt)
+  })
+
+  test('a turn with unrelated text claims nothing once prompts entered', () => {
+    expect(claim([sent('hola', 'hola')], 'something typed')).toBeUndefined()
+    expect(claim([], 'hola')).toBeUndefined()
   })
 })

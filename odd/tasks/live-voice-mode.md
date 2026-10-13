@@ -40,7 +40,7 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
 
 ### v1 hardening (authorized 2026-10-13)
 - [x] T5 `CLAUDE.md`: what the mod is, layout, all checks, dev-run, mod API gotchas.
-- [ ] T6 Correlate live turns by prompt origin (`prompt.submit` hook sees `origin.kind === 'plugin'`,
+- [x] T6 Correlate live turns by prompt origin (`prompt.submit` hook sees `origin.kind === 'plugin'`,
   `name === 'live-voice'`), not by matching the raw transcript text. Test-first.
 - [ ] T7 Scope processes per session: a session token in the children's argv, a per-session runtime dir
   and pause flag; stop/silence kill only this session's children (no global `pkill -f <script>`). Test-first.
@@ -95,6 +95,19 @@ Barge-in, global keybindings, cloud providers.
   `"/live on"` -> "Live voice on." and the listener was gone after the session ended (no stray listen.py/arecord).
 - Not verified (no runnable RED, needs a person at the mic): the interactive loop end to end (speak -> prompt ->
   spoken reply), band rendering and hotkeys in a live terminal, Esc abort stopping playback.
+
+- T6 done (route: delegated direct). Live prompts are records `{ sent, entered, isEntering }` kept from the
+  plugin's own `$.prompt.submit` call: its result is the prompt as it entered (after other plugins' rewrites, or
+  a drop); `turn.start` claims the oldest record whose sent or entered text the turn's text holds (merged queued
+  prompts), else the oldest still entering. Raw transcript equality is gone. Deviation from the plan: the plugin's
+  own `prompt.submit` hook never runs for its own `$.prompt.submit` (observed in the test kit: neither the hook nor
+  its `.catch` re-entry handler is called; the same prompt raised by the test does reach it), so the record lives
+  in the submit call, not in a hook; the CLAUDE.md gotcha about `prompt.submit` hooks seeing the plugin origin
+  holds for other plugins' hooks only. New engine harness `test/fake.ts` (processes, files, session id, mocked
+  clock, model reply). RED: `claude plugin test .` -> 2 fail ("a transcript the plugin submitted is a live turn
+  even when another plugin rewrites it" and "queued live prompts merged into one turn", spoken `[]`); GREEN: 26
+  pass / 0 fail (with 4 `claim` unit tests). `claude plugin validate .` passed (only the pre-existing CLAUDE.md
+  warning); `tsc -p <scratchpad tsconfig>` no errors; python 5 OK; `bash -n scripts/speak.sh` ok.
 
 ## Next step
 Manual acceptance in an interactive session: `claude --plugin-dir <repo>`, `/live`, speak a question.

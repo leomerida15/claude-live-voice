@@ -2,7 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, HookStream, ProcessSpawnChunk, ProcessSpawnResult, Register } from 'claude-code'
 
 import type { LiveVoiceState, LiveVoiceStatus } from '../types'
-import { SentenceChunker, USAGE, cleanTranscript, parseLiveCommand } from './text.ts'
+import { SentenceChunker, USAGE, claim, cleanTranscript, parseLiveCommand } from './text.ts'
+import type { SubmittedPrompt } from './text.ts'
 
 type $ = EngineInterface
 type Child = HookStream<ProcessSpawnChunk, ProcessSpawnResult>
@@ -26,8 +27,8 @@ const live = {
   player: undefined as Child | undefined,
   queue: [] as string[],
   isSpeaking: false,
-  // Transcripts submitted and not yet seen at turn.start.
-  submitted: [] as string[],
+  // Transcripts this plugin submitted, not yet claimed by a turn.start.
+  prompts: [] as SubmittedPrompt[],
   // Live turns by id, each with the chunker of its spoken reply.
   turns: new Map<string, SentenceChunker>(),
 }
@@ -47,7 +48,7 @@ const stateNow = (): LiveVoiceState => {
   if (live.isSpeaking || live.queue.length > 0) return 'speaking'
   if (live.isMuted) return 'muted'
   if (live.isTranscribing) return 'transcribing'
-  if (live.submitted.length > 0 || live.turns.size > 0) return 'thinking'
+  if (live.prompts.length > 0 || live.turns.size > 0) return 'thinking'
   return 'listening'
 }
 
@@ -66,6 +67,31 @@ const writePause = ($: $) =>
 const kill = ($: $, script: string) =>
   $.process.run(['pkill', '-TERM', '-f', script], { timeoutMs: 5_000 }).catch(() => undefined)
 
+const forget = (prompt: SubmittedPrompt) => {
+  live.prompts = live.prompts.filter(one => one !== prompt)
+}
+
+// Submits a transcript and keeps it as a live prompt until a turn claims it.
+// The submission's result is the prompt as it entered (after other plugins'
+// rewrites); the turn may start before it resolves, while it is entering.
+// A plugin's own prompt.submit hooks do not see its own $.prompt.submit, so
+// the record is kept here rather than in a hook.
+const submit = ($: $, text: string) => {
+  const prompt: SubmittedPrompt = { sent: text, entered: undefined, isEntering: true }
+  live.prompts.push(prompt)
+  void $.prompt
+    .submit({ text, asUser: true })
+    .then(entered => {
+      if (entered.drop !== undefined) forget(prompt)
+      else prompt.entered = entered.text.trim()
+    })
+    .catch(() => forget(prompt))
+    .finally(() => {
+      prompt.isEntering = false
+      void publish($)
+    })
+}
+
 const transcribe = async ($: $, wav: string) => {
   if (!live.isOn || live.isMuted) {
     await $.process.run(['rm', '-f', wav]).catch(() => undefined)
@@ -81,13 +107,7 @@ const transcribe = async ($: $, wav: string) => {
     )
     const text = done.exitCode === 0 ? cleanTranscript(String(JSON.parse(done.stdout).text ?? '')) : undefined
     if (done.exitCode !== 0) $.ui.toast(`live-voice: Whisper is not answering at ${config.whisperUrl}`)
-    if (text !== undefined && live.isOn && !live.isMuted) {
-      live.submitted.push(text)
-      void $.prompt.submit({ text, asUser: true }).catch(() => {
-        live.submitted = live.submitted.filter(one => one !== text)
-        void publish($)
-      })
-    }
+    if (text !== undefined && live.isOn && !live.isMuted) submit($, text)
   } catch {
     $.ui.toast('live-voice: transcription failed')
   } finally {
@@ -194,7 +214,7 @@ const start = async ($: $) => {
 
 const stop = async ($: $) => {
   live.isOn = false
-  live.submitted = []
+  live.prompts = []
   live.turns.clear()
   const listener = live.listener
   live.listener = undefined
@@ -273,10 +293,9 @@ export const register: Register = (on, options) => {
   })
 
   on('turn.start', ($, e, next) => {
-    const text = e.text.trim()
-    const at = live.submitted.indexOf(text)
-    if (live.isOn && at >= 0) {
-      live.submitted.splice(at, 1)
+    const prompt = live.isOn ? claim(live.prompts, e.text) : undefined
+    if (prompt !== undefined) {
+      forget(prompt)
       live.turns.set(e.turnId, new SentenceChunker())
     }
 

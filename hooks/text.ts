@@ -37,6 +37,26 @@ export function parseLiveCommand(args: string): LiveCommand {
   }
 }
 
+/**
+ * A prompt the plugin submitted: the text it sent, the text that entered
+ * once other plugins' prompt.submit hooks rewrote it (known when the
+ * submission resolves), and whether the submission is still entering.
+ */
+export type SubmittedPrompt = { sent: string; entered: string | undefined; isEntering: boolean }
+
+/**
+ * The submitted prompt a starting turn belongs to: the oldest whose text, as
+ * sent or as it entered, the turn's text holds (queued prompts merge into one
+ * turn); else the oldest still entering, as a turn can start before its
+ * submission resolves with the rewritten text.
+ */
+export function claim<P extends SubmittedPrompt>(prompts: readonly P[], turnText: string): P | undefined {
+  const text = turnText.trim()
+  const holds = (part: string | undefined) => part !== undefined && part !== '' && text.includes(part)
+
+  return prompts.find(prompt => holds(prompt.entered) || holds(prompt.sent)) ?? prompts.find(prompt => prompt.isEntering)
+}
+
 // Phrases Whisper is known to invent from silence or noise.
 const HALLUCINATIONS = [
   /blank_audio/i,
