@@ -33,7 +33,7 @@ Out of scope: barge-in, global keybindings, cloud providers, non-Linux audio.
 ## Checks (run all before a commit)
 
 ```
-claude plugin validate .
+claude plugin validate .            # one expected warning: CLAUDE.md at the root (dev docs, not plugin context)
 tsc -p <tsconfig>                     # see below
 claude plugin test .
 python3 -I -m unittest discover -s test -p 'test_*.py'
@@ -69,8 +69,13 @@ interactive smoke test is in `docs/smoke-test.md`.
   `$.clock.after(0, ...)` and return; never await the listener loop in a hook.
 - A hot reload runs `register` and `session.start` again: module variables
   start over, `$.state` stays.
-- A plugin's `$.prompt.submit` runs once the session is idle; its
-  `prompt.submit` hooks see `origin: { kind: 'plugin', name, asUser }`.
+- A plugin's `$.prompt.submit` runs once the session is idle. Other plugins'
+  `prompt.submit` hooks see `origin: { kind: 'plugin', name, asUser }`, but the
+  plugin's OWN `prompt.submit` hook does not run for its own submission (observed
+  in the test kit). Live turns are correlated with the submit result instead.
+- Tests: hooks answering `$` calls return `{ value }`; the test `$` has no
+  `$.state` (check state through `/live status`); a hot reload is simulated with
+  a second `session.start`. Shared fakes live in `test/fake.ts`.
 
 ## Conventions
 

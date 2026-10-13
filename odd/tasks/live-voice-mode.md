@@ -48,7 +48,7 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
   live was on, resume the listener (product decision: resume, not switch off). Test-first.
 - [x] T9 Echo-guard tunables: `userConfig` options for the post-playback tail and the VAD thresholds,
   passed to `listen.py` as flags; defaults unchanged. Test-first (python + engine tests).
-- [ ] T10 Interactive smoke-test checklist for the human (`docs/smoke-test.md`), linked from the README.
+- [x] T10 Interactive smoke-test checklist for the human (`docs/smoke-test.md`), linked from the README.
 
 ## Acceptance criteria
 - `claude plugin validate .` passes; type-check passes; `claude plugin test .` passes.
@@ -149,5 +149,12 @@ Barge-in, global keybindings, cloud providers.
   `$.prompt.submit` (test kit). Engine tests need `{ value }`-wrapped answers for `$` nouns and ~1 s of real time
   per mocked-clock advance while a stream is open (hence `timeoutMs: 30_000`).
 
+- T10 done (route: inline). `docs/smoke-test.md`: preconditions, start, one spoken turn, echo guard, code
+  skipping, typed prompts silent, controls, two sessions (process scoping), hot reload, failure paths.
+  Linked from README. Passive doc: structural readback only. CLAUDE.md corrected (own `prompt.submit`
+  hook does not see own submissions) and the expected validate warning documented.
+
 ## Next step
-Manual acceptance in an interactive session: `claude --plugin-dir <repo>`, `/live`, speak a question.
+The human runs `docs/smoke-test.md` with the microphone and reports failed steps. Not verified yet:
+the real voice loop, a real hot reload, two concurrent sessions. Known gap: children started before a
+`/clear` keep the old session tag, so a later reload misses them.

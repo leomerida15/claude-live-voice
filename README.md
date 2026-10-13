@@ -97,6 +97,8 @@ positive number falls back to its default.
 
 ## Development
 
+Before a release, run the interactive checklist in [docs/smoke-test.md](docs/smoke-test.md).
+
 ```
 claude plugin validate .
 claude plugin test .
