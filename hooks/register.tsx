@@ -18,6 +18,7 @@ import {
   cellWidth,
   cleanTranscript,
   flatRow,
+  groupVoices,
   isVoiced,
   killPattern,
   liveColors,
@@ -25,10 +26,13 @@ import {
   parseListenerLine,
   parseLiveCommand,
   safeSessionId,
+  sampleText,
   sessionTag,
   smoothLevel,
   sortVoices,
   tunable,
+  voiceLabel,
+  voiceOption,
   waveRow,
 } from './text.ts'
 import type { SubmittedPrompt } from './text.ts'
@@ -69,6 +73,8 @@ const live = {
   voice: 'ef_dora',
   listener: undefined as Child | undefined,
   player: undefined as Child | undefined,
+  // The "Test voice" sample playing, live voice on or off.
+  tester: undefined as Child | undefined,
   queue: [] as string[],
   isSpeaking: false,
   // Transcripts this plugin submitted, not yet claimed by a turn.start.
@@ -188,9 +194,13 @@ const stopTicker = () => {
   live.ticker = undefined
 }
 
-// The listener discards audio while the flag file holds "1".
+// The listener discards audio while the flag file holds "1": muted, or
+// while a reply or a voice sample plays.
 const writePause = ($: $) =>
-  $.fs.write(config.pauseFile, live.isMuted || live.isSpeaking || live.queue.length > 0 ? '1' : '0')
+  $.fs.write(
+    config.pauseFile,
+    live.isMuted || live.isSpeaking || live.queue.length > 0 || live.tester !== undefined ? '1' : '0',
+  )
 
 // Stops this session's children of one script (listen.py or speak.sh): the
 // pattern needs the script name and this session's tag, so other sessions'
@@ -289,6 +299,13 @@ const speakNext = async ($: $) => {
   if (live.isSpeaking) return
   live.isSpeaking = true
   live.waveTick = 0
+  // A reply wins over a voice sample still playing: two voices never overlap.
+  const tester = live.tester
+  if (tester !== undefined) {
+    live.tester = undefined
+    void tester.return(undefined as never).catch(() => undefined)
+    await kill($, 'speak.sh')
+  }
   await writePause($)
   await publish($)
   while (live.isOn && live.queue.length > 0) {
@@ -338,13 +355,52 @@ const enqueue = ($: $, sentences: string[]) => {
 
 const silence = async ($: $) => {
   live.queue = []
-  const player = live.player
+  const players = [live.player, live.tester].filter((one): one is Child => one !== undefined)
   live.player = undefined
-  if (player !== undefined) {
-    void player.return(undefined as never).catch(() => undefined)
-    await kill($, 'speak.sh')
-  }
+  live.tester = undefined
+  for (const player of players) void player.return(undefined as never).catch(() => undefined)
+  if (players.length > 0) await kill($, 'speak.sh')
   await publish($)
+}
+
+// Plays the voice sample to its end, then lets the mic listen again; a
+// failure is toasted with speak.sh's first stderr line.
+const playSample = async ($: $, tester: Child) => {
+  let errors = ''
+  try {
+    for await (const chunk of tester) {
+      if (chunk.stream === 'stderr' && errors.length < 2_000) errors += chunk.text
+    }
+    const ended = await tester.result
+    if (ended.code !== 0 && ended.signal === null && live.tester === tester) {
+      const why = errors.split('\n').map(line => line.trim()).find(line => line !== '')
+      $.ui.toast(`live-voice: the voice test failed${why === undefined ? '' : `: ${why}`}`)
+    }
+  } catch {
+    // Stopped mid-sample.
+  }
+  if (live.tester !== tester) return
+  live.tester = undefined
+  if (live.isOn) await writePause($)
+}
+
+// "Test voice": says a short sample in the selected voice, with this
+// session's tag so a stop kills it; refused while a reply is being spoken or
+// another sample plays, so two voices never overlap.
+const testVoice = async ($: $) => {
+  if (live.isSpeaking || live.queue.length > 0 || live.tester !== undefined) {
+    return 'Live voice is busy speaking; test the voice when it is quiet.'
+  }
+  const tester = $.process.spawn({
+    argv: ['bash', `${config.scripts}/speak.sh`, '--tag', config.tag, live.voice],
+    env: { KOKORO_URL: config.kokoroUrl },
+    input: sampleText(live.voice),
+  })
+  live.tester = tester
+  if (live.isOn) await writePause($)
+  $.clock.after(0, () => void playSample($, tester))
+
+  return `Testing voice ${voiceLabel(live.voice)}.`
 }
 
 // Starts listen.py with the current VAD settings and reads it.
@@ -387,7 +443,7 @@ const restartListener = async ($: $) => {
 // Lets go of the children this module held (a reload's are orphans by now)
 // and starts its runtime state over.
 const forgetChildren = () => {
-  for (const child of [live.listener, live.player]) {
+  for (const child of [live.listener, live.player, live.tester]) {
     void child?.return(undefined as never).catch(() => undefined)
   }
   live.isOn = false
@@ -395,6 +451,7 @@ const forgetChildren = () => {
   live.isTranscribing = false
   live.listener = undefined
   live.player = undefined
+  live.tester = undefined
   live.queue = []
   live.isSpeaking = false
   live.prompts = []
@@ -505,7 +562,7 @@ const summary = async ($: $) => {
 
   return [
     'Live voice settings:',
-    `  voice      ${live.voice}`,
+    `  voice      ${voiceLabel(live.voice)}`,
     `  animation  ${live.animation}`,
     `  silence    ${config.vadEndSilenceMs} ms`,
     `  colors     ${COLOR_TARGETS.map(target => `${target} ${now[target]}`).join(' · ')}`,
@@ -573,6 +630,8 @@ const answerLive = async ($: $, args: string) => {
         : 'Could not open the settings dialog here (a wider terminal shows it).'
       return { text: `${head}\n${await summary($)}` }
     }
+    case 'config-test':
+      return { text: await testVoice($) }
     case 'config-reset':
       await resetSettings($)
       return { text: 'Settings restored to the defaults.' }
@@ -627,13 +686,13 @@ export const register: Register = (on, options) => {
     await $.command.register({
       name: 'live',
       description: 'Hands-free voice conversation (local Whisper + Kokoro); /live config: voice, colors, animation, silence',
-      argumentHint: '[on|off|mute|status|voice <name>|config [voice <name>|animation <wave|bars|off>|silence <ms>|<target> <color>|reset]]',
+      argumentHint: '[on|off|mute|status|voice <name>|config [test|voice <name>|animation <wave|bars|off>|silence <ms>|<target> <color>|reset]]',
       immediate: true,
     })
     await $.command.register({
       name: 'live-config',
       description: 'Live voice settings: voice, colors, animation, end-of-speech silence',
-      argumentHint: '[voice <name>|animation <wave|bars|off>|silence <ms>|<target> <color>|reset]',
+      argumentHint: '[test|voice <name>|animation <wave|bars|off>|silence <ms>|<target> <color>|reset]',
       immediate: true,
     })
 
@@ -776,7 +835,7 @@ export const register: Register = (on, options) => {
     if (!('Select' in elements)) {
       return (
         <Box flexDirection="column">
-          <Text>Voice           {current.voice}</Text>
+          <Text>Voice           {voiceLabel(current.voice)}</Text>
           <Text>Animation       {current.animation}</Text>
           <Text>End silence     {current.silenceMs} ms</Text>
           {COLOR_TARGETS.map(target => (
@@ -790,7 +849,10 @@ export const register: Register = (on, options) => {
     }
     const { Select } = elements
     const colorOptions = COLORS.map(color => ({ value: color }))
-    const voices = live.voices.includes(current.voice) ? live.voices : [current.voice, ...live.voices]
+    const listed = live.voices.includes(current.voice) ? live.voices : [current.voice, ...live.voices]
+    // Grouped by native language, the session's first; Select draws no group
+    // headers, so each option names its language.
+    const voices = groupVoices(listed, config.language).flatMap(group => group.voices.map(voice => voice.id))
     const silences = SILENCES.includes(current.silenceMs) ? SILENCES : [...SILENCES, current.silenceMs].sort((a, b) => a - b)
 
     return (
@@ -799,13 +861,26 @@ export const register: Register = (on, options) => {
         <Select
           key="voice"
           label="Voice           "
-          options={voices.map(voice => ({ value: voice }))}
+          options={voices.map(voice => ({ value: voice, label: voiceOption(voice) }))}
           value={current.voice}
           autoFocus
           onSelect={(value: string) => {
             if (voices.includes(value)) void setVoice($, value)
           }}
         />
+        <Box flexDirection="row" gap={2}>
+          <Text dimColor>{`                 ${voiceLabel(current.voice)}`}</Text>
+          <Button
+            key="test-voice"
+            plain
+            hotkey="t"
+            label="Test voice"
+            onPress={async () => {
+              const answer = await testVoice($)
+              if (answer.startsWith('Live voice is busy')) $.ui.toast(`live-voice: ${answer}`)
+            }}
+          />
+        </Box>
         {COLOR_TARGETS.map(target => (
           <Select
             key={`color-${target}`}

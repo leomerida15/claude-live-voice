@@ -96,6 +96,20 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
 - [x] T20 `/live-config` command (user request 2026-10-13: `/live:config` is impossible, a command name
   allows only letters, digits, `_`, `-`): an alias that answers exactly as `/live config <args>`.
 
+### Settings dialog, round 2 (user-approved design 2026-10-13)
+- [x] T21 Voices by native language + "Test voice": `describeVoice(id)` (Kokoro id = language letter, gender
+  letter, `_name`, `v0` stripped) and `groupVoices(ids, language)` (session language first, the rest
+  alphabetically, names sorted within a group); the dialog shows `Dora · Spanish · female (ef_dora)` and
+  lists `Spanish — Dora (female)` options (Select has no group headers); a "Test voice" button (hotkey `t`)
+  and `/live config test` speak a language-matching sample with the selected voice through speak.sh (session
+  tag, kill-scoped), live on or off, mic paused while it plays, "busy" while live voice is speaking. The
+  `/live config` summary describes the voice. Test-first.
+- [ ] T22 Theme colors + custom RGB + hex: each color target takes a theme key (follows the person's theme),
+  a named color, or `#rrggbb`/`#rgb` (normalized lowercase `#rrggbb`); defaults unchanged. Pure `parseColor`,
+  `hexToRgb`, `rgbToHex`, `stepChannel`, `channelBar`. Dialog: a target picker, a row of theme swatches, R/G/B
+  bars with −/+ (hotkeys q/w, a/s, z/x), step `1` fine (1) / `2` coarse (16, default), a live preview. Shortcut
+  `/live config <target> <theme|name|#hex>`; usage lists the kinds. Test-first.
+
 ## Acceptance criteria
 - `claude plugin validate .` passes; type-check passes; `claude plugin test .` passes.
 - Helpers run standalone (listen.py prints a WAV path per utterance; speak.sh plays text).
@@ -353,6 +367,17 @@ Barge-in, global keybindings, cloud providers.
   hook; the engine refuses it (a command.run hook cannot wait on its own turn), so the `/live` body moved to
   the top-level `answerLive($, args)` used by both hooks. GREEN: 75 pass, 0 fail. `claude plugin validate .`
   passed (expected CLAUDE.md warning); tsc no output. Commit: this commit.
+
+- T21 done (route: delegated direct, one writer for register.tsx, text.ts, tests and docs). RED: `claude plugin
+  test .` -> 70 pass, 9 fail (voices.test.ts did not load: `describeVoice` missing; 8 engine tests: grouped option
+  order and labels, the described voice in the dialog and summary, `config test`, the Test voice button, busy).
+  GREEN: 87 pass, 0 fail. `claude plugin validate .` passed (1 expected CLAUDE.md warning); python 23 OK;
+  `bash -n scripts/speak.sh` ok; tsc no output. Decisions: Select has no group headers, so options read
+  `Spanish — Dora (female)`; the described voice and `Test voice` (hotkey `t`) sit on the row under the picker;
+  the sample's language follows the voice (Spanish `e`, else English); the mic pause file holds `1` while a
+  sample plays (live on), so the listener does not take the sample for speech; a live reply that starts during
+  a sample stops the sample (no overlap). Not verified: real playback and the dialog in a live terminal.
+  Commit: see git log (`feat: group voices by native language and test the selected voice`).
 
 ## Next step
 The human runs `docs/smoke-test.md` with the microphone and reports failed steps. Not verified yet:

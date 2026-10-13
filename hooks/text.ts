@@ -21,7 +21,7 @@ export const ANIMATIONS: readonly LiveVoiceAnimation[] = ['wave', 'bars', 'off']
 export const SILENCES: readonly number[] = [1000, 1500, 2000, 2500, 3000]
 
 export const CONFIG_USAGE =
-  `Usage: /live config [reset | voice <name> | animation <${ANIMATIONS.join('|')}> | silence <${SILENCES.join('|')}>` +
+  `Usage: /live config [reset | test | voice <name> | animation <${ANIMATIONS.join('|')}> | silence <${SILENCES.join('|')}>` +
   ` | <${COLOR_TARGETS.join('|')}> <${COLORS.join('|')}>]`
 
 const isTarget = (value: string): value is ColorTarget => (COLOR_TARGETS as readonly string[]).includes(value)
@@ -63,6 +63,97 @@ export function sortVoices(voices: readonly string[]): string[] {
   return [...names.filter(name => name.startsWith('e')), ...names.filter(name => !name.startsWith('e'))]
 }
 
+/** A Kokoro voice as the dialog names it: its id, name, native language and gender. */
+export type VoiceInfo = { id: string; name: string; language: string; gender: 'female' | 'male' | 'unknown' }
+
+// A Kokoro voice id's first letter is the voice's native language.
+const VOICE_LANGUAGES: Record<string, string> = {
+  a: 'American English',
+  b: 'British English',
+  e: 'Spanish',
+  f: 'French',
+  h: 'Hindi',
+  i: 'Italian',
+  j: 'Japanese',
+  p: 'Brazilian Portuguese',
+  z: 'Mandarin Chinese',
+}
+const OTHER_LANGUAGE = 'Other'
+
+// The voice letters that speak a Whisper language, in the order they are listed.
+const SESSION_VOICE_LETTERS: Record<string, readonly string[]> = {
+  es: ['e'],
+  en: ['a', 'b'],
+  fr: ['f'],
+  it: ['i'],
+  pt: ['p'],
+  ja: ['j'],
+  zh: ['z'],
+  hi: ['h'],
+}
+
+/**
+ * A Kokoro voice id read as `<language><gender>_<name>` (`ef_dora`: Spanish,
+ * female, Dora); a `v0` before the name is dropped, an unknown letter is
+ * `Other` (language) or `unknown` (gender).
+ */
+export function describeVoice(id: string): VoiceInfo {
+  const [prefix = '', ...rest] = id.split('_')
+  const raw = rest.join('_').replace(/^v0/i, '')
+  const name = raw === '' ? id : raw.charAt(0).toUpperCase() + raw.slice(1)
+  const isCode = prefix.length === 2
+  const language = (isCode ? VOICE_LANGUAGES[prefix.charAt(0).toLowerCase()] : undefined) ?? OTHER_LANGUAGE
+  const letter = isCode ? prefix.charAt(1).toLowerCase() : ''
+  const gender = letter === 'f' ? 'female' : letter === 'm' ? 'male' : 'unknown'
+
+  return { id, name, language, gender }
+}
+
+/** A voice in one line: `Dora · Spanish · female (ef_dora)`. */
+export function voiceLabel(id: string): string {
+  const voice = describeVoice(id)
+
+  return `${voice.name} · ${voice.language} · ${voice.gender} (${voice.id})`
+}
+
+/** A voice as a picker option, its language first: `Spanish — Dora (female)`. */
+export function voiceOption(id: string): string {
+  const voice = describeVoice(id)
+
+  return `${voice.language} — ${voice.name} (${voice.gender})`
+}
+
+/**
+ * Voices grouped by native language: the session language's groups first
+ * (English: American, then British), then the rest by language name with
+ * `Other` last; within a group, by name. Each voice once.
+ */
+export function groupVoices(ids: readonly string[], sessionLanguage: string): { language: string; voices: VoiceInfo[] }[] {
+  const groups = new Map<string, VoiceInfo[]>()
+  for (const id of new Set(ids)) {
+    const voice = describeVoice(id)
+    groups.set(voice.language, [...(groups.get(voice.language) ?? []), voice])
+  }
+  const first = (SESSION_VOICE_LETTERS[sessionLanguage.toLowerCase()] ?? []).map(letter => VOICE_LANGUAGES[letter] ?? '')
+  const rank = (language: string) => {
+    const at = first.indexOf(language)
+
+    return at >= 0 ? at : language === OTHER_LANGUAGE ? first.length + 1 : first.length
+  }
+
+  return [...groups.entries()]
+    .sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b))
+    .map(([language, voices]) => ({ language, voices: voices.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)) }))
+}
+
+const SAMPLES: Record<string, string> = { e: 'Hola, así suena esta voz.' }
+const ENGLISH_SAMPLE = 'Hi, this is how this voice sounds.'
+
+/** What "Test voice" says: a sentence in the voice's own language (Spanish), else English. */
+export function sampleText(id: string): string {
+  return SAMPLES[id.charAt(0).toLowerCase()] ?? ENGLISH_SAMPLE
+}
+
 /** The voices offered when Kokoro does not list its own: Spanish first, a few English ones. */
 export const FALLBACK_VOICES: readonly string[] = ['ef_dora', 'em_alex', 'em_santa', 'af_heart', 'af_bella', 'am_adam', 'bf_emma', 'bm_george']
 
@@ -78,6 +169,7 @@ export type LiveCommand =
   | { kind: 'voice'; voice: string }
   | { kind: 'config' }
   | { kind: 'config-reset' }
+  | { kind: 'config-test' }
   | { kind: 'config-set'; target: ColorTarget; color: LiveVoiceColor }
   | { kind: 'config-voice'; voice: string }
   | { kind: 'config-animation'; animation: LiveVoiceAnimation }
@@ -90,6 +182,7 @@ function parseConfig(rest: string[]): LiveCommand {
   const [first = '', second = '', ...extra] = rest.map(word => word.toLowerCase())
   if (rest.length === 0) return { kind: 'config' }
   if (first === 'reset' && rest.length === 1) return { kind: 'config-reset' }
+  if (first === 'test' && rest.length === 1) return { kind: 'config-test' }
   if (isTarget(first) && isColor(second) && extra.length === 0) return { kind: 'config-set', target: first, color: second }
   if (first === 'voice' && isVoice(second) && extra.length === 0) return { kind: 'config-voice', voice: second }
   if (first === 'animation' && isAnimation(second) && extra.length === 0) return { kind: 'config-animation', animation: second }

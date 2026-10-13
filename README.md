@@ -50,6 +50,7 @@ claude --plugin-dir /path/to/claude-live-voice
 | `/live config` | Opens the settings dialog: voice, colors, animation, end-of-speech silence. |
 | `/live-config` | The same dialog as `/live config`; every `/live config ...` shortcut works as `/live-config ...` (a command name cannot hold a colon, so there is no `/live:config`). |
 | `/live config voice <name>` | Sets the voice, like `/live voice`. |
+| `/live config test` | Says a short sample in the selected voice (Spanish voices in Spanish, the rest in English). |
 | `/live config <user\|agent\|dot\|idle> <color>` | Sets one color directly, for example `/live config agent magenta`. |
 | `/live config animation <wave\|bars\|off>` | How the band's wave moves. |
 | `/live config silence <1000\|1500\|2000\|2500\|3000>` | The silence (ms) that ends what you say; restarts the listener. |
@@ -107,7 +108,7 @@ with every current setting and the commands that change them.
 
 | Setting | What it changes | Default |
 | --- | --- | --- |
-| Voice | The Kokoro voice. The list comes from Kokoro (`/v1/audio/voices`), Spanish first; a built-in list when Kokoro does not answer. | `voice` below |
+| Voice | The Kokoro voice, shown as `Dora · Spanish · female (ef_dora)`. The list comes from Kokoro (`/v1/audio/voices`), grouped by each voice's native language (the id's first letter: `a` American English, `b` British English, `e` Spanish, `f` French, `h` Hindi, `i` Italian, `j` Japanese, `p` Brazilian Portuguese, `z` Mandarin Chinese; the second letter is `f` female or `m` male), the session `language` first; a built-in list when Kokoro does not answer. `Test voice` (hotkey `t`) says a sample with it; it is refused while a reply is being spoken. | `voice` below |
 | Animation | `wave` (a line bouncing with the sound), `bars` (the same, as bars) or `off` (a still dim line). | `wave` |
 | End silence | 1000-3000 ms of silence that ends what you say; a change restarts the listener. | `vadEndSilenceMs` below |
 | Colors | The band's colors, below. | |

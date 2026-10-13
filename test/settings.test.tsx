@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { fakeWorld, settle } from './fake.ts'
+import { RUNTIME_DIR, SESSION_ID, fakeWorld, settle } from './fake.ts'
 import type { World } from './fake.ts'
 
 const live = (args: string) => ({
@@ -144,7 +144,7 @@ test('/live config reset restores every setting', SLOW, async ($, on) => {
   expect(world.store.has('animation')).toBe(false)
   expect(world.store.has('silenceMs')).toBe(false)
   const shown = (await $.command.run(live('config'))).text
-  expect(shown).toMatch(/voice\s+ef_dora/)
+  expect(shown).toMatch(/voice\s+Dora · Spanish · female \(ef_dora\)/)
   expect(shown).toMatch(/animation\s+wave/)
   expect(shown).toMatch(/silence\s+2000 ms/)
 })
@@ -156,7 +156,7 @@ test('/live config answers every setting and the shortcuts when the dialog canno
   const ran = await $.command.run(live('config'))
   expect(world.opened).toContain('live-voice-config')
   expect(ran.text).toMatch(/could not open/i)
-  expect(ran.text).toMatch(/voice\s+ef_dora/)
+  expect(ran.text).toMatch(/voice\s+Dora · Spanish · female \(ef_dora\)/)
   expect(ran.text).toMatch(/animation\s+wave/)
   expect(ran.text).toMatch(/silence\s+2000 ms/)
   expect(ran.text).toMatch(/user green.*agent cyan.*dot red.*idle gray/)
@@ -164,7 +164,7 @@ test('/live config answers every setting and the shortcuts when the dialog canno
   expect(ran.text).toContain('animation <wave|bars|off>')
 })
 
-test('the settings dialog lists Kokoro\'s voices Spanish first, the animations and the silences', SLOW, async ($, on) => {
+test('the settings dialog lists Kokoro\'s voices by native language, Spanish first, the animations and the silences', SLOW, async ($, on) => {
   const world = fakeWorld(on)
   await $.session.start(START)
   await $.command.run(live('on'))
@@ -173,8 +173,18 @@ test('the settings dialog lists Kokoro\'s voices Spanish first, the animations a
   const pane = await $.ui.mount({ plugin: 'live-voice', surface: 'terminal', ...PANE })
   const voice = await pane.find({ key: 'voice' })
   const values = (voice?.props.options as { value: string }[]).map(option => option.value)
-  expect(values).toEqual(['ef_dora', 'em_alex', 'em_santa', 'af_heart', 'bm_george'])
+  expect(values).toEqual(['em_alex', 'ef_dora', 'em_santa', 'af_heart', 'bm_george'])
+  const labels = (voice?.props.options as { label: string }[]).map(option => option.label)
+  expect(labels).toEqual([
+    'Spanish — Alex (male)',
+    'Spanish — Dora (female)',
+    'Spanish — Santa (male)',
+    'American English — Heart (female)',
+    'British English — George (male)',
+  ])
   expect(voice?.props.value).toBe('ef_dora')
+  const texts = (await pane.findAll({ type: 'Text' })).map(one => one.text)
+  expect(texts.some(text => text.includes('Dora · Spanish · female (ef_dora)'))).toBe(true)
   expect((await pane.find({ key: 'animation' }))?.props.value).toBe('wave')
   const silence = await pane.find({ key: 'silence' })
   expect((silence?.props.options as { value: string }[]).map(option => option.value)).toEqual(['1000', '1500', '2000', '2500', '3000'])
@@ -199,7 +209,7 @@ test('the settings dialog falls back to a built-in voice list when Kokoro does n
   await $.command.run(live('config'))
   const pane = await $.ui.mount({ plugin: 'live-voice', surface: 'terminal', ...PANE })
   const values = ((await pane.find({ key: 'voice' }))?.props.options as { value: string }[]).map(option => option.value)
-  expect(values.slice(0, 3)).toEqual(['ef_dora', 'em_alex', 'em_santa'])
+  expect(values.slice(0, 3)).toEqual(['em_alex', 'ef_dora', 'em_santa'])
   expect(values.length).toBeGreaterThan(3)
   await pane.unmount()
 })
@@ -211,8 +221,76 @@ test('/live-config opens the same settings dialog and takes the same shortcuts a
   await $.session.start(START)
   const opened = await $.command.run(liveConfig(''))
   expect(world.opened).toContain('live-voice-config')
-  expect(opened.text).toMatch(/voice\s+ef_dora/)
+  expect(opened.text).toMatch(/voice\s+Dora · Spanish · female \(ef_dora\)/)
   expect((await $.command.run(liveConfig('voice em_alex'))).text).toBe('Voice set to em_alex.')
   expect((await $.command.run(liveConfig('silence 2500'))).text).toBe('End-of-speech silence set to 2500 ms.')
   expect((await $.command.run(liveConfig('dance'))).text).toMatch(/Usage/)
+})
+
+const PAUSED = `${RUNTIME_DIR}/live-voice/${SESSION_ID}/paused`
+const STEP = { index: 0, model: 'claude', messageCount: 1 }
+const speaks = (world: World) => world.spawns.filter(spawn => spawn.argv.some(arg => arg.endsWith('speak.sh')))
+
+test('/live config test speaks a sample in the selected voice\'s language with the session tag, live off', SLOW, async ($, on) => {
+  const world = fakeWorld(on)
+  await $.session.start(START)
+  const ran = await $.command.run(live('config test'))
+  expect(ran.text).toBe('Testing voice Dora · Spanish · female (ef_dora).')
+  await settle(world)
+  expect(speaks(world)).toHaveLength(1)
+  const spawn = speaks(world)[0]
+  expect(spawn?.argv).toContain('ef_dora')
+  expect(spawn?.argv.slice(-3)).toEqual(['--tag', 'live-voice-5f0c2a8e-1b7d-4c3e-9a10-2b3c4d5e6f70', 'ef_dora'])
+  expect(spawn?.input).toBe('Hola, así suena esta voz.')
+
+  await $.command.run(live('config voice af_heart'))
+  await $.command.run(liveConfig('test'))
+  await settle(world)
+  expect(speaks(world)[1]?.input).toBe('Hi, this is how this voice sounds.')
+  expect(speaks(world)[1]?.argv).toContain('af_heart')
+})
+
+test('the dialog\'s Test voice button speaks the sample and pauses the mic while live voice is on', SLOW, async ($, on) => {
+  const world = fakeWorld(on)
+  await $.session.start(START)
+  await $.command.run(live('on'))
+  await settle(world)
+  world.playback.hold = true
+  await $.command.run(live('config'))
+  const pane = await $.ui.mount({ plugin: 'live-voice', surface: 'terminal', ...PANE })
+  expect((await pane.find({ key: 'test-voice' }))?.props.hotkey).toBe('t')
+  await pane.press({ key: 'test-voice' })
+  await settle(world)
+  expect(speaks(world)).toHaveLength(1)
+  expect(speaks(world)[0]?.input).toBe('Hola, así suena esta voz.')
+  expect(world.files.get(PAUSED)).toBe('1')
+  world.playback.release()
+  await settle(world)
+  expect(world.files.get(PAUSED)).toBe('0')
+  await pane.unmount()
+  await $.command.run(live('off'))
+})
+
+test('/live config test answers busy while live voice is speaking and spawns nothing', SLOW, async ($, on) => {
+  const world = fakeWorld(on)
+  await $.session.start(START)
+  await $.command.run(live('on'))
+  await settle(world)
+  world.hear('/run/user/1000/live-voice/utt-1.wav')
+  await settle(world)
+  world.playback.hold = true
+  world.reply.text = 'Hola. Estoy bien.'
+  await $.turn.start({ turnId: 't1', text: 'hola mundo' })
+  for await (const _ of $.turn.step({ turnId: 't1', ...STEP })) {
+    // Drain the step.
+  }
+  await settle(world)
+  const before = speaks(world).length
+  expect(before).toBe(1)
+  expect((await $.command.run(live('config test'))).text).toMatch(/busy/i)
+  await settle(world)
+  expect(speaks(world)).toHaveLength(before)
+  await $.command.run(live('off'))
+  world.playback.release()
+  await settle(world)
 })
