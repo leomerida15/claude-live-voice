@@ -380,11 +380,33 @@ export function parseLiveCommand(args: string): LiveCommand {
 }
 
 /**
- * A prompt the plugin submitted: the text it sent, the text that entered
- * once other plugins' prompt.submit hooks rewrote it (known when the
- * submission resolves), and whether the submission is still entering.
+ * A prompt a live turn may start from: one the plugin submitted (a
+ * transcript), or a system message (`isNotice`) whose reply is spoken after
+ * the notice cue. The text it was sent with, the text that entered once
+ * other plugins' prompt.submit hooks rewrote it (known when the submission
+ * resolves), and whether the submission is still entering.
  */
-export type SubmittedPrompt = { sent: string; entered: string | undefined; isEntering: boolean }
+export type SubmittedPrompt = { sent: string; entered: string | undefined; isEntering: boolean; isNotice?: boolean }
+
+/**
+ * The prompt origins (`prompt.submit`'s `e.origin.kind`) whose turns are
+ * spoken while live voice is on, as a voice turn is: messages the person did
+ * not type (a background task's notification, another session's message, a
+ * schedule firing, a channel). Typed prompts (`composer`), other plugins, the
+ * bridge and the SDK stay silent.
+ */
+export const SPOKEN_ORIGINS: ReadonlySet<string> = new Set([
+  'task-notification',
+  'peer',
+  'peer-send-message',
+  'scheduled-trigger',
+  'channel',
+])
+
+/** Said before a system-triggered reply, so it is not taken for an answer to the person: Spanish, else English. */
+export function noticeCue(language: string): string {
+  return language.trim().toLowerCase().startsWith('es') ? 'Aviso.' : 'Notice.'
+}
 
 /**
  * The submitted prompt a starting turn belongs to: the oldest whose text, as

@@ -112,13 +112,21 @@ binding warnings.
 Press `Esc` while Claude answers to interrupt the turn. That also stops playback
 and drops the sentences still waiting to be spoken.
 
-Only replies to prompts you spoke are read aloud. Prompts you type are answered
-as usual, in silence. Code blocks are never read: the mod says "código omitido"
-once instead.
+Replies to prompts you spoke are read aloud, and so are replies to messages
+Claude Code sends by itself while live voice is on: a background task's
+notification (an agent finished), another Claude session's message, a scheduled
+task or `/loop` firing, a channel. Those start with a short cue, "Aviso."
+("Notice." when the `language` is not Spanish), so you can tell them from an
+answer to what you said. A notification that arrives while Claude is already
+answering joins that turn, which is spoken only if it was a spoken one. Prompts
+you type, and prompts from other plugins, are answered as usual, in silence.
+Muting mutes only the microphone: these replies are still spoken, and `Esc`,
+Stop and speaking over them cut them as they cut any reply. Code blocks are
+never read: the mod says "código omitido" once instead.
 
 ## Interrupting by voice
 
-While Claude speaks a reply to a prompt you spoke, the microphone keeps
+While Claude speaks a reply (to a prompt you spoke, or a notice), the microphone keeps
 listening. Speak over the reply and the mod cuts the voice at once, drops the
 sentences still waiting, aborts Claude's turn (as `Esc` does) and sends what you
 said as the next prompt. Prompts you typed are never aborted by voice, and while

@@ -29,6 +29,7 @@ import {
   applyChords,
   bargeFlags,
   claim,
+  noticeCue,
   audioBarWaveWidth,
   barsRow,
   cellWidth,
@@ -53,6 +54,7 @@ import {
   pauseMode,
   safeSessionId,
   sampleText,
+  SPOKEN_ORIGINS,
   selectOptions,
   selectWidth,
   sessionTag,
@@ -133,6 +135,9 @@ const live = {
   prompts: [] as SubmittedPrompt[],
   // Live turns by id, each with the chunker of its spoken reply.
   turns: new Map<string, SentenceChunker>(),
+  // Live turns a system message started whose first sentence still waits
+  // for the notice cue.
+  cues: new Set<string>(),
   // The mic level (0..1) the listening wave shows: listen.py's levels,
   // smoothed (fast attack, slow decay); 0 unless listening.
   level: 0,
@@ -423,6 +428,15 @@ const enqueue = ($: $, sentences: string[]) => {
   }
 }
 
+// Queues a live turn's sentences; a system-triggered turn's first one is
+// preceded by the notice cue, so it is not taken for an answer to the person.
+const enqueueTurn = ($: $, turnId: string, sentences: string[]) => {
+  if (sentences.length === 0) return
+  if (!live.cues.delete(turnId)) return enqueue($, sentences)
+  const [first, ...rest] = sentences
+  enqueue($, [`${noticeCue(config.language)} ${first}`, ...rest])
+}
+
 const silence = async ($: $) => {
   live.queue = []
   const players = [live.player, live.tester].filter((one): one is Child => one !== undefined)
@@ -445,6 +459,7 @@ const bargeIn = async ($: $) => {
   // Forgotten first, so the rest of their streamed reply is not queued again.
   const running = [...live.turns.keys()]
   live.turns.clear()
+  live.cues.clear()
   await silence($)
   for (const turnId of running) {
     // Rejects when the turn already ended: nothing left to abort.
@@ -556,6 +571,7 @@ const forgetChildren = () => {
   live.isBarged = false
   live.prompts = []
   live.turns.clear()
+  live.cues.clear()
   live.level = 0
   stopTicker()
 }
@@ -579,6 +595,7 @@ const stop = async ($: $) => {
   stopTicker()
   live.prompts = []
   live.turns.clear()
+  live.cues.clear()
   const listener = live.listener
   live.listener = undefined
   if (listener !== undefined) {
@@ -906,11 +923,35 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'live' }, ($, e) => answerLive($, e.args))
 
+  // A system message (a task's notification, another session's message, a
+  // schedule, a channel) while live voice is on: kept like a transcript, so
+  // the turn it starts is spoken, after the notice cue. One delivered into a
+  // running turn (`turnId` set) starts none, so nothing is kept. The prompt
+  // passes on untouched.
+  on('prompt.submit', async ($, e, next) => {
+    if (!live.isOn || e.turnId !== undefined || !SPOKEN_ORIGINS.has(e.origin.kind)) return next(e)
+    const prompt: SubmittedPrompt = { sent: e.text.trim(), entered: undefined, isEntering: true, isNotice: true }
+    live.prompts.push(prompt)
+    try {
+      const entered = await next(e)
+      if (entered.drop !== undefined) forget(prompt)
+      else prompt.entered = entered.text.trim()
+
+      return entered
+    } catch (error) {
+      forget(prompt)
+      throw error
+    } finally {
+      prompt.isEntering = false
+    }
+  })
+
   on('turn.start', ($, e, next) => {
     const prompt = live.isOn ? claim(live.prompts, e.text) : undefined
     if (prompt !== undefined) {
       forget(prompt)
       live.turns.set(e.turnId, new SentenceChunker())
+      if (prompt.isNotice === true) live.cues.add(e.turnId)
     }
 
     return next(e)
@@ -929,11 +970,11 @@ export const register: Register = (on, options) => {
       if (chunk.kind === 'text' && isLive()) {
         const pieces = block >= 0 && chunk.index !== block ? chunker.push('\n') : []
         block = chunk.index
-        enqueue($, [...pieces, ...chunker.push(chunk.text)])
+        enqueueTurn($, e.turnId, [...pieces, ...chunker.push(chunk.text)])
       }
       yield chunk
     }
-    if (isLive()) enqueue($, chunker.push('\n'))
+    if (isLive()) enqueueTurn($, e.turnId, chunker.push('\n'))
 
     return stream.result
   })
@@ -945,8 +986,9 @@ export const register: Register = (on, options) => {
     if (e.reason === 'aborted') {
       await silence($)
     } else if (chunker !== undefined) {
-      enqueue($, chunker.flush())
+      enqueueTurn($, e.turnId, chunker.flush())
     }
+    live.cues.delete(e.turnId)
     if (live.isOn) await publish($)
 
     return next(e)

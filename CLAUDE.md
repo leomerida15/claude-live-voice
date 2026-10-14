@@ -82,9 +82,16 @@ interactive smoke test is in `docs/smoke-test.md`.
   `prompt.submit` hooks see `origin: { kind: 'plugin', name, asUser }`, but the
   plugin's OWN `prompt.submit` hook does not run for its own submission (observed
   in the test kit). Live turns are correlated with the submit result instead.
+- System messages (`e.origin.kind` in `SPOKEN_ORIGINS`, `hooks/text.ts`: task
+  notifications, peers, schedules, channels) are recorded by the mod's own
+  `prompt.submit` hook while live is on, so their turns are spoken after the
+  notice cue. One with `e.turnId` set was delivered into a running turn and
+  starts no `turn.start`: nothing is recorded.
 - Tests: hooks answering `$` calls return `{ value }`; the test `$` has no
   `$.state` (check state through `/live status`); a hot reload is simulated with
   a second `session.start`. Shared fakes live in `test/fake.ts`.
+  A test plugin (`plugins: [...]`) runs isolated: it cannot see the test
+  file's module variables.
 
 ## Never change the audio setup
 

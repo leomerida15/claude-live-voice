@@ -146,6 +146,13 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
   before the utterance ends). listen.py prints `barge` when an utterance starts in mode `2` and keeps the
   noise floor still there. Muted wins; typed turns are never aborted. Test-first.
 
+### System-triggered turns (user request 2026-10-14)
+- [x] T27 Speak replies to system-triggered turns: while `/live` is on, a turn whose prompt origin is in
+  `SPOKEN_ORIGINS` (`task-notification`, `peer`, `peer-send-message`, `scheduled-trigger`, `channel`) is
+  spoken like a voice turn, its first chunk preceded by a short cue ("Aviso." in Spanish, else "Notice.").
+  Typed (`composer`) and other origins stay silent. Same queue, Esc/stop, echo guard and barge-in as voice
+  turns. Route: delegated writer (trigger: 2+ non-trivial files). Test-first.
+
 ## Acceptance criteria
 - `claude plugin validate .` passes; type-check passes; `claude plugin test .` passes.
 - Helpers run standalone (listen.py prints a WAV path per utterance; speak.sh plays text).
@@ -497,6 +504,24 @@ Global keybindings, cloud providers (barge-in was out of scope until T26, author
   adapt in mode `2`; a barge-in forgets the live turn first so its remaining streamed text is not queued.
   Not verified: real echo levels on speakers, the engine aborting a real turn, `module-echo-cancel`.
   Commit: see git log (`feat: barge-in interrupts the spoken reply by voice`).
+
+- T27 done (route: delegated direct; writer trigger: register.tsx, text.ts, tests, docs). RED: `claude plugin
+  test .` -> 130 pass, 1 fail (`test/system.test.ts` did not load: `SPOKEN_ORIGINS`, `noticeCue` missing); with
+  the pure helpers in -> 136 pass, 6 fail (task-notification, peer and English-cue turns not spoken, Esc and
+  barge-in tests not speaking; a test with an observer plugin failed with `seen is not defined`: a test plugin
+  runs isolated, so that test was dropped and the bottom-of-chain prompt asserts the text and origin pass on).
+  GREEN: 141 pass, 0 fail (task-notification -> `Aviso. El agente terminó.`, `Todo bien.`; peer -> cue first;
+  `language: en` -> `Notice. Done.`; composer and another plugin's prompt with the same text silent; live off
+  silent and no stale record later; a notification with `turnId` set (into a running turn) records nothing;
+  Esc (aborted turn.complete) drops the queue; `barge` aborts `n1`). `claude plugin validate .` passed (1
+  expected CLAUDE.md warning); python 28 OK; `bash -n scripts/speak.sh` ok; `tsc -p .` fails with TS5097 on
+  the unchanged `./text.ts` import (pre-existing: the engine's generated tsconfig lacks
+  `allowImportingTsExtensions`); `tsc -p . --allowImportingTsExtensions` and a scratch tsconfig including
+  `test/` both clean. Decisions: the cue is joined to the first sentence (one Kokoro request); its language
+  follows the session `language` (`es*` -> `Aviso.`, else `Notice.`); mute mutes only the mic, so system
+  replies are still spoken while muted, as voice replies are; a notification delivered into a running turn
+  joins that turn (spoken only if it is a live one). Not verified: a real task notification in a live session.
+  T27 commit: <this commit> (`feat: speak replies to system-triggered turns`).
 
 ## Next step
 The human runs `docs/smoke-test.md` with the microphone and reports failed steps. Not verified yet:

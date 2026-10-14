@@ -53,6 +53,9 @@ Mark each step pass or fail and note what you heard or saw on a failure.
 
 - [ ] Type a prompt (do not speak). The reply is NOT read aloud.
 - [ ] Type a prompt with exactly the same words you spoke in step 2. It is still NOT read aloud.
+- [ ] Ask Claude (typed) to run a short background agent, for example "start a background agent that
+      waits 20 seconds and reports done". When it finishes, Claude's reply to the task notification IS
+      read aloud, starting with "Aviso.". Speaking over it cuts it, as in step 6.
 
 ## 6. Controls
 
