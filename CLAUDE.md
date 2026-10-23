@@ -29,7 +29,9 @@ Out of scope: global keybindings, cloud providers, non-Linux audio.
 | `types/index.d.ts` | `$.state` contract (`live-voice.status`). |
 | `scripts/listen.py` | VAD recorder (stdlib only). Pause file `1` paused, `0` normal, `2` barge-in (prints `barge`). `--stdin` reads raw PCM for tests. |
 | `scripts/speak.sh` | Text on stdin -> Kokoro WAV -> `paplay`. Cleans up on SIGTERM. |
+| `scripts/codex-live/` | Optional Codex engine sidecar (Node ESM): `main.mjs login\|logout\|status\|run`, its own ChatGPT OAuth (`auth.mjs`, credentials in `${XDG_CONFIG_HOME:-~/.config}/live-voice/codex-auth.json`, 0600), the wire protocol (`protocol.mjs`), the WebRTC call via `@oh-my-pi/pi-natives` (`live.mjs`). |
 | `test/*.test.ts(x)` | Engine tests (`claude plugin test`). |
+| `test/codex-live/*.test.mjs` | Sidecar unit tests (`node --test`), pure parts only: no network, no native module. |
 | `test/test_*.py` | Python tests for `listen.py`. |
 | `odd/tasks/live-voice-mode.md` | Feature document: tasks, routes, evidence. |
 
@@ -41,6 +43,7 @@ tsc -p <tsconfig>                     # see below
 claude plugin test .
 python3 -I -m unittest discover -s test -p 'test_*.py'
 bash -n scripts/speak.sh
+node --test 'test/codex-live/*.test.mjs'
 ```
 
 Type-check: once the engine has loaded the mod (`claude --plugin-dir .`), it

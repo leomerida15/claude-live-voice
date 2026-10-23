@@ -153,6 +153,25 @@ Meta+Space shortcut), cloud providers, non-Linux audio.
   Typed (`composer`) and other origins stay silent. Same queue, Esc/stop, echo guard and barge-in as voice
   turns. Route: delegated writer (trigger: 2+ non-trivial files). Test-first.
 
+### Codex live engine (owner request 2026-10-23: "exactly like pi-live-codex")
+Accepted risks, stated to the owner before the request: the engine uses a private, undocumented ChatGPT
+endpoint (`chatgpt.com/backend-api/codex/realtime/calls`), identifies itself as the Codex client, depends on
+the owner's ChatGPT subscription and may break or be refused at any time; the realtime model paraphrases
+Claude's replies instead of reading them. It is opt-in (the default engine stays local Whisper + Kokoro) and
+runs only on the owner's machine with the owner's account. The plugin never reads another application's
+credentials (`~/.codex`, `~/.pi`): it owns its own browser sign-in (OAuth PKCE, as Pi does) and stores its
+own tokens in `${XDG_CONFIG_HOME:-~/.config}/live-voice/codex-auth.json` (0600).
+- [x] T28 Sidecar + login: `scripts/codex-live/` (Node ESM): `login` (browser PKCE on port 1455, device code
+  and pasted redirect fallbacks), `logout`, `status`, `run` (WebRTC call + sideband via the
+  `@oh-my-pi/pi-natives` addon, JSON-lines events on stdout, commands from a command directory). Route:
+  delegated writer (trigger: 2+ non-trivial files). Test-first on the pure parts (`node --test`).
+- [ ] T29 Engine switch in the mod: settings `engine` (`local` | `codex`) and `codexVoice`, `/live-config
+  engine ...` and `codex login|logout|status`; engine codex spawns the sidecar instead of
+  listen.py/Whisper/Kokoro and bridges delegations to Claude turns. Route: delegated writer (trigger: 2+
+  non-trivial files). Test-first (engine kit, fake sidecar).
+- [ ] T30 Live smoke test of the codex engine with the person (real login, real call): unchecked until the
+  person runs `docs/smoke-test.md` section 10.
+
 ## Acceptance criteria
 - `claude plugin validate .` passes; type-check passes; `claude plugin test .` passes.
 - Helpers run standalone (listen.py prints a WAV path per utterance; speak.sh plays text).
@@ -174,6 +193,8 @@ ask-on-risk. Forecast ~600 authored lines.
   T24: delegated direct (writer trigger: register.tsx, text.ts, tests, docs).
   T25: delegated direct (writer trigger: register.tsx, text.ts, tests, docs).
   T26: delegated direct (writer trigger: listen.py, register.tsx, text.ts, types, tests, docs).
+  T28: delegated direct (writer trigger: auth.mjs, protocol.mjs, live.mjs, main.mjs, tests, docs).
+  T29: delegated direct (writer trigger: register.tsx, text.ts, types, plugin.json, tests, docs).
 
 ## Out of scope (hardening)
 Global keybindings, cloud providers (barge-in was out of scope until T26, authorized 2026-10-13).
@@ -522,6 +543,25 @@ Global keybindings, cloud providers (barge-in was out of scope until T26, author
   replies are still spoken while muted, as voice replies are; a notification delivered into a running turn
   joins that turn (spoken only if it is a live one). Not verified: a real task notification in a live session.
   T27 commit: <this commit> (`feat: speak replies to system-triggered turns`).
+
+- T28 done (route: delegated direct; writer trigger: 4 sidecar modules, tests, docs). Runtime: Node (v25 here;
+  pi-live-codex declares node >= 22.19 and loads the addon from Node; both `node` and `bun` loaded
+  `@oh-my-pi/pi-natives-linux-x64` here, Node chosen as the common runtime with no extra install). RED:
+  `node --test 'test/codex-live/*.test.mjs'` -> 2 files fail (`auth.mjs`, `protocol.mjs` not found). GREEN:
+  23 pass, 0 fail (PKCE S256; authorize URL params; pasted redirect parsing; JWT account id; token response ->
+  credentials; token errors carry neither tokens nor bodies, only status and an OAuth error code; redact;
+  refresh a minute before expiry; status signed-in/expired/signed-out; XDG path; file 0600 in a 0700 dir,
+  broken file reads as signed out; getAccess refreshes once and saves; headers; call id; session payload;
+  voices; server events; client messages; 500-byte chunking; JSON lines; command validation; RMS level;
+  instructions). Smoke without network, scratch XDG_CONFIG_HOME: `status` -> signed-out / expired, `run`
+  signed out -> exit 3 with the login hint, `run --natives /nonexistent` -> exit 4 with install steps,
+  `logout` removes the file; `loadNatives` of the default Pi path resolves the peer, capture and ws.
+  Commands reach the sidecar as numbered JSON files in `--commands <dir>` (the mod's `$.process.spawn`
+  closes stdin after `input`, so no stdin channel); the sidecar polls every 100 ms and deletes each one read.
+  Deviations from pi: errors never include token-endpoint bodies; the signaling error body is cut to 300
+  chars with JWTs redacted; originator `live-voice` in the authorize URL; no confirmations or background
+  activities (not bridged); controls `[[live:status]]` and `[[live:cancel-current]]` are answered by the mod.
+  Not verified until T30: the real sign-in, refresh against auth.openai.com, the call, audio.
 
 ## Next step
 The human runs `docs/smoke-test.md` with the microphone and reports failed steps. Not verified yet:
