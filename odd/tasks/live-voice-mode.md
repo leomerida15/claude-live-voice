@@ -165,7 +165,7 @@ own tokens in `${XDG_CONFIG_HOME:-~/.config}/live-voice/codex-auth.json` (0600).
   and pasted redirect fallbacks), `logout`, `status`, `run` (WebRTC call + sideband via the
   `@oh-my-pi/pi-natives` addon, JSON-lines events on stdout, commands from a command directory). Route:
   delegated writer (trigger: 2+ non-trivial files). Test-first on the pure parts (`node --test`).
-- [ ] T29 Engine switch in the mod: settings `engine` (`local` | `codex`) and `codexVoice`, `/live-config
+- [x] T29 Engine switch in the mod: settings `engine` (`local` | `codex`) and `codexVoice`, `/live-config
   engine ...` and `codex login|logout|status`; engine codex spawns the sidecar instead of
   listen.py/Whisper/Kokoro and bridges delegations to Claude turns. Route: delegated writer (trigger: 2+
   non-trivial files). Test-first (engine kit, fake sidecar).
@@ -562,6 +562,28 @@ Global keybindings, cloud providers (barge-in was out of scope until T26, author
   chars with JWTs redacted; originator `live-voice` in the authorize URL; no confirmations or background
   activities (not bridged); controls `[[live:status]]` and `[[live:cancel-current]]` are answered by the mod.
   Not verified until T30: the real sign-in, refresh against auth.openai.com, the call, audio.
+
+- T29 done (route: delegated direct; writer trigger: register.tsx, text.ts, types, fake.ts, tests, docs). RED:
+  `claude plugin test .` -> 141 pass, 1 fail (`test/codex.test.ts` did not load: `ENGINES`, `codexSettings`,
+  `parseSidecarEvent`, ... missing). GREEN: 156 pass, 0 fail (helpers: engines, voices, stored settings,
+  config parsing, controls, sidecar events, command paths, kill pattern, work status; engine kit with a fake
+  sidecar: engine set, kept, shown, reset to local; `/live on` spawns `node .../codex-live/main.mjs run --tag
+  --commands --voice sol --language es --session-id` and no listener, `connecting` until `ready`; signed out ->
+  the toast, live stays off; delegation -> plugin prompt -> tool step `commentary`, answer `final`, nothing to
+  Kokoro; `[[live:status]]` answered without a turn, `[[live:cancel-current]]` aborts the live turn and its
+  delegation gets `cancel {id}`; mute/unmute, band Stop -> `cancel`, Esc -> `cancel {id}`; a task
+  notification turn -> `notice`; levels drive `speaking`/`listening` on the band; sidecar error -> toast, its
+  end -> toast and off; login lines -> toasts, status/logout answers; local engine spawns no sidecar and
+  writes no command files; a reload with codex on kills the orphan and starts a new sidecar). One local test
+  (`a reload ... kills the orphans`) asserted the exact kill list, so the orphan sidecar is killed only under
+  the Codex engine (changing the engine stops a running sidecar first). `claude plugin validate .` passed (1
+  expected CLAUDE.md warning; the directory's LICENSE/ICON notes are pre-existing); `tsc -p .
+  --allowImportingTsExtensions` and a scratch tsconfig including `test/` clean; python 28 OK; `bash -n
+  scripts/speak.sh` ok; `node --test 'test/codex-live/*.test.mjs'` 23 pass. Decisions: control strings are
+  answered by the mod (it knows the live turns); queued voice requests merged into one turn all get its
+  final; the band Stop asks the realtime voice to stop by commentary (the protocol has no output cancel);
+  the Kokoro "Test voice" still works under the Codex engine. Not verified until T30: everything against the
+  real endpoint and audio.
 
 ## Next step
 The human runs `docs/smoke-test.md` with the microphone and reports failed steps. Not verified yet:

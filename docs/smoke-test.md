@@ -2,7 +2,8 @@
 
 A checklist for a person at the microphone. Automated checks cannot cover the
 real loop: audio devices, timing, echo and the terminal band. Run it after any
-change to `hooks/register.tsx`, `scripts/listen.py` or `scripts/speak.sh`.
+change to `hooks/register.tsx`, `scripts/listen.py`, `scripts/speak.sh` or
+`scripts/codex-live/` (section 10).
 
 Mark each step pass or fail and note what you heard or saw on a failure.
 
@@ -120,6 +121,27 @@ Mark each step pass or fail and note what you heard or saw on a failure.
   then a toast says `speech failed: speak.sh: Kokoro is not answering at ...` with curl's reason; the band
   returns to `listening`. Start Kokoro again within the wait instead: the sentence is spoken late.
 - [ ] Quit Claude Code with live on: no `listen.py`, `arecord` or `paplay` is left running.
+
+## 10. Codex engine (opt-in; uses your ChatGPT account)
+
+- [ ] `/live-config codex status` says signed out on a fresh machine;
+  `ls ~/.config/live-voice/` has no `codex-auth.json`.
+- [ ] `/live-config codex login`: the browser opens the ChatGPT sign-in; after it, a toast says
+  `Codex: Signed in to Codex.` and `stat -c %a ~/.config/live-voice/codex-auth.json` prints `600`.
+- [ ] `/live-config engine codex`, then `/live on`: the band reads `connecting · sol`, then `listening · sol`.
+  `pgrep -af codex-live` shows one `main.mjs run` with this session's tag; no `listen.py`.
+- [ ] Ask by voice for something that needs the repository ("¿qué hay en el README?"): a prompt from
+  live-voice appears, Claude answers, and the voice tells you the answer (paraphrased).
+- [ ] Speak while the voice talks: it stops and listens (the model's own barge-in).
+- [ ] Ask "¿cómo va?" while Claude works: the voice says the work is still running.
+- [ ] `m` mutes (the wave goes flat, the voice does not hear you); `m` again unmutes.
+- [ ] `Esc` during a Claude turn: the voice says it stopped.
+- [ ] A background task finishing while live: the voice tells you briefly.
+- [ ] Save `hooks/register.tsx` unchanged: the call comes back, still one `main.mjs run`.
+- [ ] `/live off`: `pgrep -af codex-live` prints nothing for this session.
+- [ ] `/live-config codex logout`, then `/live on`: a toast says
+  `Codex: not signed in, run /live-config codex login` and live voice stays off.
+- [ ] `/live-config engine local`: `/live on` uses listen.py, Whisper and Kokoro again.
 
 ## Report
 

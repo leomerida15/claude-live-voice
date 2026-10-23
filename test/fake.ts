@@ -30,8 +30,8 @@ export type World = {
   stateWrites: () => number
   /** The `status` value the plugin wrote last to `$.state`. */
   lastStatus: () => unknown
-  /** The text the model streams for the next turn.step. */
-  reply: { text: string }
+  /** The text the model streams for the next turn.step; `tools`: the step asks for a tool call. */
+  reply: { text: string; tools?: boolean }
   /** The plugin's `$.store`, kept across sessions: seed it to stand for an earlier one. */
   store: Map<string, unknown>
   /** The ids of the panes the plugin opened, oldest first. */
@@ -48,7 +48,16 @@ export type World = {
   voices: { list: string[] | undefined }
   /** The turn ids the plugin aborted with `$.turn.abort`, oldest first. */
   aborts: string[]
+  /**
+   * The Codex sidecar (`scripts/codex-live/main.mjs`): what `status` answers,
+   * the lines `login` prints, `send` prints one event line from a running
+   * `run`, `end` makes that `run` exit.
+   */
+  codex: { status: 'signed-in' | 'expired' | 'signed-out'; login: object[]; send: (event: object) => void; end: () => void }
 }
+
+/** Whether a spawn or run is the Codex sidecar. */
+export const isSidecar = (argv: readonly string[]) => argv.some(arg => arg.endsWith('codex-live/main.mjs'))
 
 /**
  * Lets pending work run: detached hook work and the pause after playback
@@ -61,6 +70,9 @@ export async function settle(world: World, ms = 400) {
 export function fakeWorld(on: On, transcript = 'hola mundo'): World {
   const heard: string[] = []
   let wake = () => {}
+  // The running sidecar's pending output lines; null ends it.
+  const sidecarOut: (string | null)[] = []
+  let wakeSidecar = () => {}
   let releases: (() => void)[] = []
   let stateWrites = 0
   let lastStatus: unknown
@@ -97,6 +109,18 @@ export function fakeWorld(on: On, transcript = 'hola mundo'): World {
     toasts: [],
     voices: { list: ['af_heart', 'bm_george', 'em_alex', 'ef_dora', 'em_santa'] },
     aborts: [],
+    codex: {
+      status: 'signed-in',
+      login: [],
+      send: event => {
+        sidecarOut.push(`${JSON.stringify(event)}\n`)
+        wakeSidecar()
+      },
+      end: () => {
+        sidecarOut.push(null)
+        wakeSidecar()
+      },
+    },
   }
   on('state.set', (_$, e, next) => {
     stateWrites += 1
@@ -151,6 +175,13 @@ export function fakeWorld(on: On, transcript = 'hola mundo'): World {
     if (isVoices && world.voices.list === undefined) {
       return { value: { exitCode: 7, stdout: '', stderr: 'connection refused', isStdoutTruncated: false, isStderrTruncated: false } }
     }
+    if (isSidecar(e.argv)) {
+      const status = e.argv.includes('logout') ? 'signed-out' : world.codex.status
+      if (e.argv.includes('logout')) world.codex.status = 'signed-out'
+      const line = `${JSON.stringify({ type: 'status', status, ...(status === 'signed-out' ? {} : { expires: '2026-10-23T12:00:00.000Z' }) })}\n`
+
+      return { value: { exitCode: 0, stdout: line, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    }
     const stdout = isVoices ? JSON.stringify({ voices: world.voices.list }) : e.argv[0] === 'curl' ? JSON.stringify({ text: transcript }) : ''
 
     return { value: { exitCode: 0, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
@@ -167,6 +198,24 @@ export function fakeWorld(on: On, transcript = 'hola mundo'): World {
           continue
         }
         yield { stream: 'stdout' as const, text: `${wav}\n` }
+      }
+    }
+    if (isSidecar(e.argv) && e.argv.includes('login')) {
+      for (const line of world.codex.login) yield { stream: 'stdout' as const, text: `${JSON.stringify(line)}\n` }
+
+      return { value: { code: 0, signal: null } }
+    }
+    if (isSidecar(e.argv)) {
+      for (;;) {
+        const line = sidecarOut.shift()
+        if (line === null) return { value: { code: 0, signal: null } }
+        if (line === undefined) {
+          await new Promise<void>(resolve => {
+            wakeSidecar = resolve
+          })
+          continue
+        }
+        yield { stream: 'stdout' as const, text: line }
       }
     }
     const isSpeak = e.argv.some(arg => arg.endsWith('speak.sh'))
@@ -196,7 +245,7 @@ export function fakeWorld(on: On, transcript = 'hola mundo'): World {
       turnId: e.turnId,
       index: e.index,
       answer: world.reply.text,
-      toolUses: [],
+      toolUses: world.reply.tools === true ? [{ id: 'tool-1', name: 'Read', input: {} }] : [],
       stopReason: 'end_turn' as const,
       usage: null,
     }

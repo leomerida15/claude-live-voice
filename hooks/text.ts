@@ -1,7 +1,15 @@
 // Pure text helpers of the live-voice mod: command parsing, transcript
 // filtering, markdown stripping and sentence chunking for speech.
 
-import type { LiveVoiceAnimation, LiveVoiceColor, LiveVoiceColors, LiveVoiceInterrupt, LiveVoiceNamedColor, LiveVoiceThemeColor } from '../types'
+import type {
+  LiveVoiceAnimation,
+  LiveVoiceColor,
+  LiveVoiceColors,
+  LiveVoiceEngine,
+  LiveVoiceInterrupt,
+  LiveVoiceNamedColor,
+  LiveVoiceThemeColor,
+} from '../types'
 
 export const USAGE = 'Usage: /live [on|off|mute|status|voice <name>|config]'
 
@@ -132,8 +140,96 @@ export function pauseMode(now: { isMuted: boolean; isSpeaking: boolean; isHeld: 
   return now.interrupt === 'off' ? '1' : '2'
 }
 
+/** The engines `/live config engine` switches between: local Whisper + Kokoro, or the Codex realtime voice. */
+export const ENGINES: readonly LiveVoiceEngine[] = ['local', 'codex']
+
+/** The Codex realtime voices (pi-live-codex's list); `sol` is the default. */
+export const CODEX_VOICES: readonly string[] = ['sol', 'alloy', 'ash', 'ballad', 'cedar', 'coral', 'echo', 'marin', 'sage', 'shimmer', 'verse']
+export const DEFAULT_CODEX_VOICE = 'sol'
+
+const isEngine = (value: unknown): value is LiveVoiceEngine => typeof value === 'string' && (ENGINES as readonly string[]).includes(value)
+const isCodexVoice = (value: unknown): value is string => typeof value === 'string' && CODEX_VOICES.includes(value)
+
+/** The engine settings read back from the store: each valid one kept, anything else its default. */
+export function codexSettings(
+  stored: Record<string, unknown>,
+  defaults: { engine: LiveVoiceEngine; codexVoice: string },
+): { engine: LiveVoiceEngine; codexVoice: string } {
+  return {
+    engine: isEngine(stored.engine) ? stored.engine : defaults.engine,
+    codexVoice: isCodexVoice(stored.codexVoice) ? stored.codexVoice : defaults.codexVoice,
+  }
+}
+
+/** A delegation that is a control for the client, not work: `[[live:status]]` or `[[live:cancel-current]]`. */
+export function codexControl(text: string): 'status' | 'cancel' | undefined {
+  const trimmed = text.trim()
+  if (trimmed === '[[live:status]]') return 'status'
+  if (trimmed === '[[live:cancel-current]]') return 'cancel'
+
+  return undefined
+}
+
+/** An event line of the Codex sidecar's `run`. */
+export type SidecarEvent =
+  | { type: 'ready' }
+  | { type: 'closed' }
+  | { type: 'turn_done' }
+  | { type: 'level'; in: number; out: number }
+  | { type: 'user'; text: string }
+  | { type: 'assistant'; text: string }
+  | { type: 'delegation'; id: string; text: string }
+  | { type: 'error'; message: string; code?: string }
+
+const unitLevel = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0)
+
+/** A sidecar event, checked, or undefined. */
+export function parseSidecarEvent(value: unknown): SidecarEvent | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const event = value as Record<string, unknown>
+  switch (event.type) {
+    case 'ready':
+    case 'closed':
+    case 'turn_done':
+      return { type: event.type }
+    case 'level':
+      return { type: 'level', in: unitLevel(event.in), out: unitLevel(event.out) }
+    case 'user':
+    case 'assistant':
+      return typeof event.text === 'string' ? { type: event.type, text: event.text } : undefined
+    case 'delegation':
+      return typeof event.id === 'string' && event.id !== '' && typeof event.text === 'string'
+        ? { type: 'delegation', id: event.id, text: event.text }
+        : undefined
+    case 'error':
+      return typeof event.message === 'string'
+        ? { type: 'error', message: event.message, ...(typeof event.code === 'string' ? { code: event.code } : {}) }
+        : undefined
+    default:
+      return undefined
+  }
+}
+
+/** The path of the sidecar's command file number `sequence`: zero-padded, so names sort in order. */
+export function codexCommandPath(dir: string, sequence: number): string {
+  return `${dir}/${String(sequence).padStart(8, '0')}.json`
+}
+
+const requests = (count: number) => `${count} ${count === 1 ? 'request is' : 'requests are'}`
+
+/** The answer to `[[live:status]]`: live turns running and voice requests waiting. */
+export function workStatus(active: number, queued: number): string {
+  if (active > 0) {
+    return `I'm still working on the current request.${queued > 0 ? ` ${requests(queued)} queued behind it.` : ''} I haven't received a final result yet.`
+  }
+  if (queued > 0) return `No request is currently running. ${requests(queued)} queued.`
+
+  return 'No work is currently running or queued.'
+}
+
 export const CONFIG_USAGE =
   `Usage: /live config [reset | test | voice <name> | animation <${ANIMATIONS.join('|')}> | silence <${SILENCES.join('|')}> | interrupt <${INTERRUPTS.join('|')}> | keys [apply] | mute <chord> | stop <chord>` +
+  ` | engine <${ENGINES.join('|')}> | codex <login|logout|status|voice <name>>` +
   ` | <${COLOR_TARGETS.join('|')}> <color>]; a color is a theme color (${THEME_COLORS.join('|')}),` +
   ` a named color (${COLORS.join('|')}) or #rrggbb`
 
@@ -329,6 +425,9 @@ export type LiveCommand =
   | { kind: 'config-keys' }
   | { kind: 'config-keys-apply' }
   | { kind: 'config-chord'; which: 'mute' | 'stop'; chord: string }
+  | { kind: 'config-engine'; engine: LiveVoiceEngine }
+  | { kind: 'config-codex'; action: 'login' | 'logout' | 'status' }
+  | { kind: 'config-codex-voice'; voice: string }
   | { kind: 'error'; message: string }
 
 const VOICE_NAME = /^[a-z]{1,3}_[a-z0-9]+$/i
@@ -345,6 +444,11 @@ function parseConfig(rest: string[]): LiveCommand {
   const silenceMs = /^\d+$/.test(second) ? Number(second) : NaN
   if (first === 'silence' && isSilence(silenceMs) && extra.length === 0) return { kind: 'config-silence', silenceMs }
   if (first === 'interrupt' && isInterrupt(second) && extra.length === 0) return { kind: 'config-interrupt', interrupt: second }
+  if (first === 'engine' && isEngine(second) && extra.length === 0) return { kind: 'config-engine', engine: second }
+  if (first === 'codex' && (second === 'login' || second === 'logout' || second === 'status') && extra.length === 0) {
+    return { kind: 'config-codex', action: second }
+  }
+  if (first === 'codex' && second === 'voice' && isCodexVoice(extra[0]) && extra.length === 1) return { kind: 'config-codex-voice', voice: extra[0] }
   if (first === 'keys' && rest.length === 1) return { kind: 'config-keys' }
   if (first === 'keys' && second === 'apply' && extra.length === 0) return { kind: 'config-keys-apply' }
   if ((first === 'mute' || first === 'stop') && rest.length === 2) {
@@ -384,9 +488,10 @@ export function parseLiveCommand(args: string): LiveCommand {
  * transcript), or a system message (`isNotice`) whose reply is spoken after
  * the notice cue. The text it was sent with, the text that entered once
  * other plugins' prompt.submit hooks rewrote it (known when the submission
- * resolves), and whether the submission is still entering.
+ * resolves), and whether the submission is still entering; with the Codex
+ * engine, the delegation it answers.
  */
-export type SubmittedPrompt = { sent: string; entered: string | undefined; isEntering: boolean; isNotice?: boolean }
+export type SubmittedPrompt = { sent: string; entered: string | undefined; isEntering: boolean; isNotice?: boolean; delegation?: string }
 
 /**
  * The prompt origins (`prompt.submit`'s `e.origin.kind`) whose turns are
@@ -443,7 +548,7 @@ export function sessionTag(sessionId: string): string {
  * script's name, then `--tag <tag>` as a whole word, so neither another
  * session's children nor a bare script path match.
  */
-export function killPattern(script: 'listen.py' | 'speak.sh', tag: string): string {
+export function killPattern(script: 'listen.py' | 'speak.sh' | 'codex-live/main.mjs', tag: string): string {
   return `${script.replace('.', '\\.')} (.* )?--tag ${tag}( |$)`
 }
 

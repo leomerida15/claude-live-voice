@@ -135,7 +135,6 @@ function pastedInput() {
 async function loginDevice(path) {
   const device = await startDeviceAuth()
   emit({ type: 'device', code: device.userCode, url: DEVICE_VERIFICATION_URI })
-  emit({ type: 'progress', message: `Open ${DEVICE_VERIFICATION_URI} and enter the code ${device.userCode}.` })
   openBrowser(DEVICE_VERIFICATION_URI)
   await saveCredentials(path, await finishDeviceAuth(device))
 }

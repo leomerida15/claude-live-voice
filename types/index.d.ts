@@ -1,4 +1,5 @@
-export type LiveVoiceState = 'off' | 'listening' | 'transcribing' | 'thinking' | 'speaking' | 'muted'
+/** `connecting`: the Codex engine's call is being set up (the local engine never shows it). */
+export type LiveVoiceState = 'off' | 'connecting' | 'listening' | 'transcribing' | 'thinking' | 'speaking' | 'muted'
 
 export type LiveVoiceStatus = {
   isOn: boolean
@@ -54,11 +55,25 @@ export type LiveVoiceAnimation = 'wave' | 'bars' | 'off'
 export type LiveVoiceInterrupt = 'off' | 'headphones' | 'speakers'
 
 /**
+ * Who listens and speaks: `local` (listen.py, Whisper, Kokoro) or `codex`
+ * (the codex-live sidecar's realtime voice, which delegates work to Claude).
+ */
+export type LiveVoiceEngine = 'local' | 'codex'
+
+/**
  * The settings `/live config` changes beside the colors, each kept in
  * `$.store` under its own key: the Kokoro voice, how the wave moves, the
- * silence (ms) that ends an utterance, and how speaking interrupts a reply.
+ * silence (ms) that ends an utterance, how speaking interrupts a reply, the
+ * engine, and the Codex realtime voice.
  */
-export type LiveVoiceSettings = { voice: string; animation: LiveVoiceAnimation; silenceMs: number; interrupt: LiveVoiceInterrupt }
+export type LiveVoiceSettings = {
+  voice: string
+  animation: LiveVoiceAnimation
+  silenceMs: number
+  interrupt: LiveVoiceInterrupt
+  engine: LiveVoiceEngine
+  codexVoice: string
+}
 
 /**
  * The settings dialog's color editor: which color the theme swatches and the

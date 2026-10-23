@@ -96,6 +96,17 @@ interactive smoke test is in `docs/smoke-test.md`.
   A test plugin (`plugins: [...]`) runs isolated: it cannot see the test
   file's module variables.
 
+## Codex engine (opt-in)
+
+`/live-config engine codex` runs `node scripts/codex-live/main.mjs run` instead
+of listen.py/Whisper/Kokoro. Its events come as JSON lines on stdout; the mod's
+commands go as numbered JSON files in `<runtime dir>/live-voice/<session>/codex/`
+(a spawned child's stdin closes after `input`). A delegation is submitted as a
+live prompt; the turn's tool-step text goes back as `commentary`, its answer as
+`final`, an abort as `cancel {id}`, a system-triggered turn's answer as
+`notice`. The sidecar owns its own sign-in (never read `~/.codex` or `~/.pi`)
+and must never print a token. Tests never run the real login or call.
+
 ## Never change the audio setup
 
 Do not change the user's audio configuration (default sink or source,

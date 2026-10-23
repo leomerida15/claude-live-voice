@@ -55,7 +55,10 @@ claude --plugin-dir /path/to/claude-live-voice
 | `/live config animation <wave\|bars\|off>` | How the band's wave moves. |
 | `/live config silence <1000\|1500\|2000\|2500\|3000>` | The silence (ms) that ends what you say; restarts the listener. |
 | `/live config interrupt <off\|headphones\|speakers>` | How speaking over a reply interrupts it (see [Interrupting by voice](#interrupting-by-voice)). |
-| `/live config reset` | Restores every setting above to its default. |
+| `/live config engine <local\|codex>` | Chooses the engine (see [Engines](#engines)); a running session starts again with it. |
+| `/live config codex <login\|logout\|status>` | Signs this plugin in to ChatGPT for the Codex engine, signs it out, or says whether it is signed in. |
+| `/live config codex voice <name>` | The Codex realtime voice: `sol` (default), `alloy`, `ash`, `ballad`, `cedar`, `coral`, `echo`, `marin`, `sage`, `shimmer` or `verse`. |
+| `/live config reset` | Restores every setting above to its default (the engine back to `local`). |
 
 While live mode is on, a band of two rows sits above the prompt.
 
@@ -123,6 +126,57 @@ you type, and prompts from other plugins, are answered as usual, in silence.
 Muting mutes only the microphone: these replies are still spoken, and `Esc`,
 Stop and speaking over them cut them as they cut any reply. Code blocks are
 never read: the mod says "código omitido" once instead.
+
+## Engines
+
+There are two engines; `local` is the default.
+
+- **`local`**: `listen.py` records, local Whisper transcribes, Claude answers,
+  local Kokoro reads the answer aloud. Free and offline; everything above.
+- **`codex`** (opt-in): OpenAI's realtime voice model (`gpt-live-1-codex`)
+  listens and talks, the way [pi-live-codex](https://github.com/brettinternet/pi-extensions)
+  does for Pi. It hands every coding request to Claude as a prompt and then
+  tells you Claude's answer. Barge-in is the model's own. Whisper and Kokoro
+  are not used.
+
+**Read this before you turn on `codex`.** It uses a private, undocumented
+ChatGPT endpoint (`chatgpt.com/backend-api/codex/realtime/calls`) and
+identifies itself as the Codex desktop client, exactly as pi-live-codex does.
+It needs your own ChatGPT subscription, it may stop working or be refused at
+any time, and using it may not be what OpenAI intends for that endpoint. The
+realtime model **paraphrases** Claude's answers rather than reading them word
+for word. Use it on your own machine with your own account only.
+
+To use it:
+
+```
+/live-config codex login      # opens the browser; sign in with ChatGPT
+/live-config engine codex
+/live on
+```
+
+The sign-in is the plugin's own (browser OAuth with PKCE on
+`localhost:1455`, as Pi does; a device code when that port is taken). It never
+reads another program's credentials (`~/.codex`, `~/.pi`). Its tokens are kept
+in `${XDG_CONFIG_HOME:-~/.config}/live-voice/codex-auth.json` (mode 0600) and
+refreshed by themselves; `/live-config codex logout` deletes them. From a
+terminal, `node scripts/codex-live/main.mjs login` (or `login --device`) also
+signs in and accepts a pasted redirect URL.
+
+The engine needs Node.js and the native audio and WebRTC addon
+`@oh-my-pi/pi-natives` (plus `ws`). If Pi with pi-live-codex is installed,
+the addon is found in `~/.pi/agent/npm/node_modules` and only read from there.
+Otherwise install it for the plugin:
+
+```
+npm install --prefix ~/.local/share/live-voice @oh-my-pi/pi-natives@18.4.9 ws@8.22.0
+export LIVE_VOICE_CODEX_MODULES=~/.local/share/live-voice/node_modules
+```
+
+With `codex`, the band's wave follows the call: green while you speak, cyan
+while the voice speaks; `m` mutes the microphone, `s` asks the voice to stop,
+and `Esc` stops Claude's turn (the voice is told it was stopped). The state
+reads `connecting` until the call is up.
 
 ## Interrupting by voice
 
@@ -237,4 +291,5 @@ Before a release, run the interactive checklist in [docs/smoke-test.md](docs/smo
 claude plugin validate .
 claude plugin test .
 python3 -I -m unittest discover -s test -p 'test_*.py'
+node --test 'test/codex-live/*.test.mjs'
 ```

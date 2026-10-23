@@ -6,6 +6,7 @@ import type {
   LiveVoiceColor,
   LiveVoiceColors,
   LiveVoiceEditor,
+  LiveVoiceEngine,
   LiveVoiceInterrupt,
   LiveVoiceSettings,
   LiveVoiceState,
@@ -14,11 +15,14 @@ import type {
 import {
   ANIMATIONS,
   CHORD_ACTIONS,
+  CODEX_VOICES,
   COLORS,
   CONFIG_USAGE,
   COLOR_TARGETS,
   DEFAULT_CHORDS,
+  DEFAULT_CODEX_VOICE,
   DEFAULT_COLORS,
+  ENGINES,
   FALLBACK_VOICES,
   INTERRUPTS,
   SILENCES,
@@ -29,6 +33,9 @@ import {
   applyChords,
   bargeFlags,
   claim,
+  codexCommandPath,
+  codexControl,
+  codexSettings,
   noticeCue,
   audioBarWaveWidth,
   barsRow,
@@ -48,6 +55,7 @@ import {
   liveSettings,
   parseColor,
   parseListenerLine,
+  parseSidecarEvent,
   readChords,
   parseLiveCommand,
   packRows,
@@ -68,8 +76,9 @@ import {
   voicePicker,
   wave as waveFrame,
   waveRow,
+  workStatus,
 } from './text.ts'
-import type { Chords, SubmittedPrompt } from './text.ts'
+import type { Chords, SidecarEvent, SubmittedPrompt } from './text.ts'
 
 type $ = EngineInterface
 type Child = HookStream<ProcessSpawnChunk, ProcessSpawnResult>
@@ -77,7 +86,14 @@ type Child = HookStream<ProcessSpawnChunk, ProcessSpawnResult>
 const OFF: LiveVoiceStatus = { isOn: false, state: 'off', queue: 0, voice: '', level: 0, wave: 0, dot: false }
 const status = atom({ plugin: 'live-voice', key: 'status' } as const, OFF)
 const colors = atom({ plugin: 'live-voice', key: 'colors' } as const, DEFAULT_COLORS)
-const SETTINGS: LiveVoiceSettings = { voice: 'ef_dora', animation: 'wave', silenceMs: 2000, interrupt: 'speakers' }
+const SETTINGS: LiveVoiceSettings = {
+  voice: 'ef_dora',
+  animation: 'wave',
+  silenceMs: 2000,
+  interrupt: 'speakers',
+  engine: 'local',
+  codexVoice: DEFAULT_CODEX_VOICE,
+}
 const settings = atom({ plugin: 'live-voice', key: 'settings' } as const, SETTINGS)
 // The dialog's color editor: the color it changes and the channel step.
 const COARSE = 16
@@ -103,7 +119,16 @@ const CHANNELS = [
   { key: 'blue', label: 'B', color: '#0000ff', down: 'z', up: 'x' },
 ] as const
 // The `$.store` keys of the settings kept beside `colors`.
-const STORED = ['voice', 'animation', 'silenceMs', 'interrupt'] as const
+const STORED = ['voice', 'animation', 'silenceMs', 'interrupt', 'engine', 'codexVoice'] as const
+
+// The Codex engine: what `/live on` says when there is no sign-in, and the
+// output level over which Claude's realtime voice counts as speaking.
+const NOT_SIGNED_IN = 'Codex: not signed in, run /live-config codex login'
+const OUTPUT_ACTIVE = 0.015
+
+// A live turn of the Codex engine: the delegations it answers, the text of
+// its last answering step, and whether a system message started it.
+type CodexTurn = { delegations: string[]; pending: string; isNotice: boolean }
 
 const STT_TIMEOUT_MS = 60_000
 // The band's clock while live voice is on: the wave moves one frame a tick
@@ -155,6 +180,18 @@ const live = {
   ticker: undefined as Timer | undefined,
   // The band's mute and stop chords (kept in $.store, bound in keybindings.json).
   chords: { ...DEFAULT_CHORDS } as Chords,
+  // Who listens and speaks: local (listen.py, Whisper, Kokoro) or the Codex sidecar.
+  engine: 'local' as LiveVoiceEngine,
+  codexVoice: DEFAULT_CODEX_VOICE,
+  // The Codex sidecar's `run`, whether its call is up, Claude's voice level in
+  // it, the last command file's number, and its live turns by id.
+  sidecar: undefined as Child | undefined,
+  isReady: false,
+  outLevel: 0,
+  commandSeq: 0,
+  codexTurns: new Map<string, CodexTurn>(),
+  // The sidecar's `login`, while one runs.
+  login: undefined as Child | undefined,
 }
 
 // Settings and paths, filled by register (options) and session.start (paths).
@@ -175,14 +212,27 @@ const config = {
   tag: '',
   dir: '',
   pauseFile: '',
+  sessionId: '',
+  // Where the mod writes the Codex sidecar's commands, one JSON file each.
+  codexDir: '',
 }
 
 // What `/live config reset` restores: the plugin's settings (`/config`), or
 // the built-in defaults.
 const defaults = { voice: 'ef_dora', silenceMs: 2000 }
 
+// The Codex engine's state: its call setting up, Claude's voice playing, or the turn work.
+const codexState = (): LiveVoiceState => {
+  if (!live.isReady) return 'connecting'
+  if (live.outLevel > OUTPUT_ACTIVE) return 'speaking'
+  if (live.isMuted) return 'muted'
+  if (live.prompts.length > 0 || live.codexTurns.size > 0) return 'thinking'
+  return 'listening'
+}
+
 const stateNow = (): LiveVoiceState => {
   if (!live.isOn) return 'off'
+  if (live.engine === 'codex') return codexState()
   if ((live.isSpeaking && !live.isBarged) || live.queue.length > 0) return 'speaking'
   if (live.isMuted) return 'muted'
   if (live.isTranscribing) return 'transcribing'
@@ -199,7 +249,7 @@ const publish = ($: $) => {
     isOn: live.isOn,
     state,
     queue: live.queue.length,
-    voice: live.voice,
+    voice: live.engine === 'codex' ? live.codexVoice : live.voice,
     level: Math.round(live.level * 100) / 100,
     wave: live.waveTick,
     dot: live.dot,
@@ -270,7 +320,7 @@ const writePause = ($: $) =>
 // Stops this session's children of one script (listen.py or speak.sh): the
 // pattern needs the script name and this session's tag, so other sessions'
 // children never match. The fallback for a child its stream did not stop.
-const kill = ($: $, script: 'listen.py' | 'speak.sh') =>
+const kill = ($: $, script: 'listen.py' | 'speak.sh' | 'codex-live/main.mjs') =>
   $.process
     .run(['pkill', '-TERM', '-f', '--', killPattern(script, config.tag)], { timeoutMs: 5_000 })
     .catch(() => undefined)
@@ -284,8 +334,8 @@ const forget = (prompt: SubmittedPrompt) => {
 // rewrites); the turn may start before it resolves, while it is entering.
 // A plugin's own prompt.submit hooks do not see its own $.prompt.submit, so
 // the record is kept here rather than in a hook.
-const submit = ($: $, text: string) => {
-  const prompt: SubmittedPrompt = { sent: text, entered: undefined, isEntering: true }
+const submit = ($: $, text: string, delegation?: string) => {
+  const prompt: SubmittedPrompt = { sent: text, entered: undefined, isEntering: true, ...(delegation === undefined ? {} : { delegation }) }
   live.prompts.push(prompt)
   void $.prompt
     .submit({ text, asUser: true })
@@ -531,8 +581,144 @@ const spawnListener = ($: $) => {
   $.clock.after(0, () => void listen($, child))
 }
 
-const start = async ($: $) => {
-  if (live.isOn) return
+const sidecarPath = () => `${config.scripts}/codex-live/main.mjs`
+
+// Hands the sidecar one command: a numbered JSON file in its command
+// directory (a spawned child's stdin closes after its input, so it cannot
+// carry them). The sidecar reads the files in order and deletes them.
+const sendCodex = async ($: $, command: Record<string, unknown>) => {
+  if (live.sidecar === undefined) return
+  live.commandSeq += 1
+  await $.fs
+    .write(codexCommandPath(config.codexDir, live.commandSeq), JSON.stringify(command))
+    .catch(() => $.ui.toast('live-voice: could not reach the Codex session'))
+}
+
+// The sidecar's sign-in state (`status`): signed-in, expired, signed-out,
+// or undefined when it does not answer.
+const codexStatus = async ($: $): Promise<{ status: string; expires?: string } | undefined> => {
+  const done = await $.process.run(['node', sidecarPath(), 'status'], { timeoutMs: 10_000 }).catch(() => undefined)
+  const line = done?.stdout.split('\n').find(one => one.trim() !== '') ?? ''
+  try {
+    const value: unknown = JSON.parse(line)
+    const record = typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {}
+    return typeof record.status === 'string'
+      ? { status: record.status, ...(typeof record.expires === 'string' ? { expires: record.expires } : {}) }
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+// A voice request from the realtime model: a control answered here, or work
+// submitted as a live prompt that remembers its delegation.
+const onDelegation = async ($: $, id: string, text: string) => {
+  const control = codexControl(text)
+  if (control === 'status') {
+    await sendCodex($, { type: 'final', id, text: workStatus(live.codexTurns.size, live.prompts.length) })
+  } else if (control === 'cancel') {
+    const running = [...live.codexTurns.keys()]
+    for (const turnId of running) await $.turn.abort({ turnId }).catch(() => undefined)
+    await sendCodex($, { type: 'final', id, text: running.length > 0 ? 'I stopped the current operation.' : "There isn't a foreground operation to stop." })
+  } else {
+    submit($, text, id)
+  }
+  await publish($)
+}
+
+const onSidecarEvent = async ($: $, event: SidecarEvent) => {
+  switch (event.type) {
+    case 'ready':
+      live.isReady = true
+      if (live.isMuted) await sendCodex($, { type: 'mute', on: true })
+      await publish($)
+      break
+    case 'level': {
+      const before = stateNow()
+      live.outLevel = event.out
+      hearLevels([event.in])
+      if (stateNow() !== before) await publish($)
+      break
+    }
+    case 'delegation':
+      await onDelegation($, event.id, event.text)
+      break
+    case 'error':
+      $.ui.toast(event.code === 'signed-out' ? NOT_SIGNED_IN : `live-voice: ${event.message}`)
+      break
+    default:
+      break
+  }
+}
+
+// Reads the sidecar's JSON lines, split across chunks; its end while live
+// voice is on turns live voice off.
+const readSidecar = async ($: $, child: Child) => {
+  let pending = ''
+  try {
+    for await (const chunk of child) {
+      if (chunk.stream !== 'stdout') continue
+      pending += chunk.text
+      let newline = pending.indexOf('\n')
+      while (newline >= 0) {
+        const line = pending.slice(0, newline)
+        pending = pending.slice(newline + 1)
+        let value: unknown
+        try {
+          value = JSON.parse(line)
+        } catch {
+          value = undefined
+        }
+        const event = parseSidecarEvent(value)
+        if (event !== undefined && live.sidecar === child) await onSidecarEvent($, event)
+        newline = pending.indexOf('\n')
+      }
+    }
+  } catch {
+    // The child was stopped or failed; handled below.
+  }
+  if (live.sidecar === child) {
+    live.sidecar = undefined
+    if (live.isOn) {
+      $.ui.toast('live-voice: the Codex session ended; /live on to start it again')
+      await stop($)
+    }
+  }
+}
+
+// The Codex engine's start: refused (a toast, live voice stays off) without
+// a sign-in; else the sidecar's `run` in place of listen.py.
+const startCodex = async ($: $) => {
+  const signIn = await codexStatus($)
+  if (signIn?.status === 'signed-out') {
+    $.ui.toast(NOT_SIGNED_IN)
+    return false
+  }
+  live.isOn = true
+  live.isMuted = false
+  live.isReady = false
+  live.outLevel = 0
+  live.commandSeq = 0
+  await $.process.run(['rm', '-rf', config.codexDir]).catch(() => undefined)
+  await $.process.run(['mkdir', '-p', config.codexDir])
+  startTicker($)
+  const child = $.process.spawn({
+    argv: [
+      'node', sidecarPath(), 'run',
+      '--tag', config.tag, '--commands', config.codexDir,
+      '--voice', live.codexVoice, '--language', config.language, '--session-id', config.sessionId,
+    ],
+  })
+  live.sidecar = child
+  $.clock.after(0, () => void readSidecar($, child))
+  await publish($)
+  return true
+}
+
+// Starts live voice with the engine chosen; false when it could not start.
+const start = async ($: $): Promise<boolean> => {
+  if (live.isOn) return true
+  if (live.engine === 'codex') return startCodex($)
   live.isOn = true
   live.isMuted = false
   await $.process.run(['mkdir', '-p', config.dir])
@@ -540,6 +726,21 @@ const start = async ($: $) => {
   startTicker($)
   spawnListener($)
   await publish($)
+  return true
+}
+
+// Mutes or unmutes the mic: the pause file (local) or the sidecar (Codex).
+const toggleMute = async ($: $) => {
+  live.isMuted = !live.isMuted
+  if (live.engine === 'codex') await sendCodex($, { type: 'mute', on: live.isMuted })
+  else await writePause($)
+  await publish($)
+}
+
+// The band's Stop: cuts the spoken reply (local) or asks the realtime voice to stop (Codex).
+const stopVoice = async ($: $) => {
+  if (live.engine === 'codex') await sendCodex($, { type: 'cancel' })
+  else await silence($)
 }
 
 // Stops this session's listener and starts it again, so new VAD settings
@@ -556,7 +757,7 @@ const restartListener = async ($: $) => {
 // Lets go of the children this module held (a reload's are orphans by now)
 // and starts its runtime state over.
 const forgetChildren = () => {
-  for (const child of [live.listener, live.player, live.tester]) {
+  for (const child of [live.listener, live.player, live.tester, live.sidecar]) {
     void child?.return(undefined as never).catch(() => undefined)
   }
   live.isOn = false
@@ -573,6 +774,10 @@ const forgetChildren = () => {
   live.turns.clear()
   live.cues.clear()
   live.level = 0
+  live.sidecar = undefined
+  live.isReady = false
+  live.outLevel = 0
+  live.codexTurns.clear()
   stopTicker()
 }
 
@@ -581,11 +786,14 @@ const forgetChildren = () => {
 const recover = async ($: $, was: LiveVoiceStatus) => {
   await kill($, 'listen.py')
   await kill($, 'speak.sh')
+  // A sidecar runs only with the Codex engine: changing the engine stops it first.
+  if (live.engine === 'codex') await kill($, 'codex-live/main.mjs')
   if (!was.isOn) return
-  await start($)
+  if (!(await start($))) return
   if (was.state === 'muted') {
     live.isMuted = true
-    await writePause($)
+    if (live.engine === 'codex') await sendCodex($, { type: 'mute', on: true })
+    else await writePause($)
     await publish($)
   }
 }
@@ -596,6 +804,16 @@ const stop = async ($: $) => {
   live.prompts = []
   live.turns.clear()
   live.cues.clear()
+  live.codexTurns.clear()
+  live.isReady = false
+  live.outLevel = 0
+  const sidecar = live.sidecar
+  live.sidecar = undefined
+  if (sidecar !== undefined) {
+    // SIGTERM: the sidecar closes the call before it exits.
+    void sidecar.return(undefined as never).catch(() => undefined)
+    await kill($, 'codex-live/main.mjs')
+  }
   const listener = live.listener
   live.listener = undefined
   if (listener !== undefined) {
@@ -636,7 +854,92 @@ const keep = async ($: $, key: (typeof STORED)[number], value: unknown) =>
 
 // Shows the settings as they are now, to the band and the dialog.
 const showSettings = ($: $) =>
-  update($, settings, () => ({ voice: live.voice, animation: live.animation, silenceMs: config.vadEndSilenceMs, interrupt: live.interrupt }))
+  update($, settings, () => ({
+    voice: live.voice,
+    animation: live.animation,
+    silenceMs: config.vadEndSilenceMs,
+    interrupt: live.interrupt,
+    engine: live.engine,
+    codexVoice: live.codexVoice,
+  }))
+
+// A new engine takes at once: live voice, when on, stops and starts again with it.
+const setEngine = async ($: $, engine: LiveVoiceEngine) => {
+  if (engine === live.engine) return
+  const wasOn = live.isOn
+  if (wasOn) await stop($)
+  live.engine = engine
+  await showSettings($)
+  await keep($, 'engine', engine)
+  await publish($)
+  if (wasOn) await start($)
+}
+
+// A new Codex voice takes on the next call: a running one starts again.
+const setCodexVoice = async ($: $, voice: string) => {
+  const isNew = voice !== live.codexVoice
+  live.codexVoice = voice
+  await showSettings($)
+  await keep($, 'codexVoice', voice)
+  await publish($)
+  if (isNew && live.isOn && live.engine === 'codex') {
+    await stop($)
+    await start($)
+  }
+}
+
+// Reads the sidecar's `login` lines into toasts; one login at a time.
+const readLogin = async ($: $, child: Child) => {
+  let pending = ''
+  const say = (line: string) => {
+    let value: Record<string, unknown>
+    try {
+      value = JSON.parse(line) as Record<string, unknown>
+    } catch {
+      return
+    }
+    const text = (key: string) => (typeof value[key] === 'string' ? (value[key] as string) : '')
+    if (value.type === 'url') $.ui.toast(`Codex: if the browser did not open, visit ${text('url')}`)
+    else if (value.type === 'device') $.ui.toast(`Codex: open ${text('url')} and enter the code ${text('code')}`)
+    else if (value.type === 'progress' || value.type === 'done') $.ui.toast(`Codex: ${text('message')}`)
+    else if (value.type === 'error') $.ui.toast(`Codex: sign-in failed: ${text('message')}`)
+  }
+  try {
+    for await (const chunk of child) {
+      if (chunk.stream !== 'stdout') continue
+      pending += chunk.text
+      let newline = pending.indexOf('\n')
+      while (newline >= 0) {
+        say(pending.slice(0, newline))
+        pending = pending.slice(newline + 1)
+        newline = pending.indexOf('\n')
+      }
+    }
+  } catch {
+    // Stopped.
+  }
+  if (live.login === child) live.login = undefined
+}
+
+// `/live-config codex login|logout|status`.
+const codexAccount = async ($: $, action: 'login' | 'logout' | 'status') => {
+  if (action === 'login') {
+    if (live.login !== undefined) return 'Codex sign-in is already running; finish it in the browser.'
+    const child = $.process.spawn({ argv: ['node', sidecarPath(), 'login'] })
+    live.login = child
+    $.clock.after(0, () => void readLogin($, child))
+    return 'Codex sign-in started in the browser; progress shows as toasts.'
+  }
+  if (action === 'logout') {
+    const done = await $.process.run(['node', sidecarPath(), 'logout'], { timeoutMs: 10_000 }).catch(() => undefined)
+    return done?.exitCode === 0 ? 'Codex: signed out.' : 'Codex: could not sign out (is node installed?).'
+  }
+  const now = await codexStatus($)
+  if (now?.status === 'signed-in') return `Codex: signed in${now.expires === undefined ? '' : ` (token valid until ${now.expires}, refreshed by itself)`}.`
+  if (now?.status === 'expired') return 'Codex: signed in; the token expired and is refreshed on the next /live on.'
+  if (now?.status === 'signed-out') return 'Codex: signed out. Sign in with /live-config codex login.'
+  return 'Codex: could not read the sign-in state (is node installed?).'
+}
 
 const setVoice = async ($: $, voice: string) => {
   live.voice = voice
@@ -674,6 +977,11 @@ const setInterrupt = async ($: $, interrupt: LiveVoiceInterrupt) => {
 
 // Back to the plugin's settings and the default colors; nothing kept.
 const resetSettings = async ($: $) => {
+  // Back to the local engine: a Codex call stops, and live voice starts again locally.
+  const wasCodexOn = live.isOn && live.engine === 'codex'
+  if (wasCodexOn) await stop($)
+  live.engine = SETTINGS.engine
+  live.codexVoice = SETTINGS.codexVoice
   await setColors($, DEFAULT_COLORS)
   live.voice = defaults.voice
   live.animation = 'wave'
@@ -685,7 +993,8 @@ const resetSettings = async ($: $) => {
   await showSettings($)
   await Promise.all(STORED.map(key => $.store.delete(key).catch(() => undefined)))
   await publish($)
-  if (isNew) await restartListener($)
+  if (wasCodexOn) await start($)
+  else if (isNew) await restartListener($)
 }
 
 // Kokoro's own voice list (Spanish first), or the built-in one when it does not answer.
@@ -713,16 +1022,25 @@ const summary = async ($: $) => {
     `  animation  ${live.animation}`,
     `  silence    ${config.vadEndSilenceMs} ms`,
     `  interrupt  ${live.interrupt}`,
+    `  engine     ${live.engine}`,
+    `  codex voice ${live.codexVoice}`,
     `  colors     ${COLOR_TARGETS.map(target => `${target} ${now[target]}`).join(' · ')}`,
     'Change one with /live config voice <name>, or:',
     CONFIG_USAGE,
   ].join('\n')
 }
 
-const describe = () =>
-  live.isOn
-    ? `Live voice is on: ${stateNow()}, voice ${live.voice}, ${live.queue.length} sentence(s) queued.`
-    : `Live voice is off. Voice ${live.voice}.`
+const describe = () => {
+  const engine = ` Engine ${live.engine}.`
+  if (!live.isOn) return `Live voice is off. Voice ${live.engine === 'codex' ? live.codexVoice : live.voice}.${engine}`
+  if (live.engine === 'codex') return `Live voice is on: ${stateNow()}, voice ${live.codexVoice}.${engine}`
+
+  return `Live voice is on: ${stateNow()}, voice ${live.voice}, ${live.queue.length} sentence(s) queued.${engine}`
+}
+
+// What `/live on` answers once live voice started.
+const onText = () =>
+  live.engine === 'codex' ? `Live voice on (Codex). Speak; voice ${live.codexVoice}.` : `Live voice on. Speak; voice ${live.voice}.`
 
 
 // A mod cannot name keybinding actions of its own, so the band borrows two the
@@ -800,19 +1118,15 @@ const answerLive = async ($: $, args: string) => {
         await stop($)
         return { text: 'Live voice off.' }
       }
-      await start($)
-      return { text: `Live voice on. Speak; voice ${live.voice}.` }
+      return { text: (await start($)) ? onText() : NOT_SIGNED_IN }
     case 'on':
-      await start($)
-      return { text: `Live voice on. Speak; voice ${live.voice}.` }
+      return { text: (await start($)) ? onText() : NOT_SIGNED_IN }
     case 'off':
       await stop($)
       return { text: 'Live voice off.' }
     case 'mute':
       if (!live.isOn) return { text: 'Live voice is off.' }
-      live.isMuted = !live.isMuted
-      await writePause($)
-      await publish($)
+      await toggleMute($)
       return { text: live.isMuted ? 'Microphone muted.' : 'Microphone unmuted.' }
     case 'status':
       return { text: describe() }
@@ -856,6 +1170,14 @@ const answerLive = async ($: $, args: string) => {
     case 'config-set':
       await pickColor($, command.target, command.color)
       return { text: `${command.target} color set to ${command.color}.` }
+    case 'config-engine':
+      await setEngine($, command.engine)
+      return { text: `Engine set to ${command.engine}.` }
+    case 'config-codex-voice':
+      await setCodexVoice($, command.voice)
+      return { text: `Codex voice set to ${command.voice}.` }
+    case 'config-codex':
+      return { text: await codexAccount($, command.action) }
     case 'error':
       return { text: command.message || USAGE }
   }
@@ -878,9 +1200,11 @@ export const register: Register = (on, options) => {
     const root = $.plugin.root
     config.scripts = (await $.fs.exists(`${root}/scripts/listen.py`)) ? `${root}/scripts` : `${root}/../scripts`
     const sessionId = await $.session.id()
+    config.sessionId = sessionId
     config.tag = sessionTag(sessionId)
     config.dir = `${(await $.env.get('XDG_RUNTIME_DIR')) ?? '/tmp'}/live-voice/${safeSessionId(sessionId)}`
     config.pauseFile = `${config.dir}/paused`
+    config.codexDir = `${config.dir}/codex`
     // A hot reload runs this again: the module started over, $.state did not.
     const was = await read($, status)
     forgetChildren()
@@ -894,19 +1218,23 @@ export const register: Register = (on, options) => {
     live.animation = loaded.animation
     live.interrupt = loaded.interrupt
     config.vadEndSilenceMs = loaded.silenceMs
+    const engine = codexSettings(kept, { engine: SETTINGS.engine, codexVoice: SETTINGS.codexVoice })
+    live.engine = engine.engine
+    live.codexVoice = engine.codexVoice
     await showSettings($)
-    await update($, status, () => (was.isOn ? { ...was, queue: 0, voice: live.voice } : { ...OFF, voice: live.voice }))
+    const voice = live.engine === 'codex' ? live.codexVoice : live.voice
+    await update($, status, () => (was.isOn ? { ...was, queue: 0, voice } : { ...OFF, voice }))
     $.clock.after(0, () => void recover($, was))
     await $.command.register({
       name: 'live',
-      description: 'Hands-free voice conversation (local Whisper + Kokoro); /live config: voice, colors, animation, silence, interrupt',
-      argumentHint: '[on|off|mute|status|voice <name>|config [test|voice <name>|animation <wave|bars|off>|silence <ms>|interrupt <off|headphones|speakers>|<target> <theme|name|#hex>|keys [apply]|mute <chord>|stop <chord>|reset]]',
+      description: 'Hands-free voice conversation (local Whisper + Kokoro, or the optional Codex engine); /live config: voice, colors, animation, silence, interrupt, engine',
+      argumentHint: '[on|off|mute|status|voice <name>|config [test|voice <name>|animation <wave|bars|off>|silence <ms>|interrupt <off|headphones|speakers>|<target> <theme|name|#hex>|keys [apply]|mute <chord>|stop <chord>|engine <local|codex>|codex <login|logout|status|voice <name>>|reset]]',
       immediate: true,
     })
     await $.command.register({
       name: 'live-config',
-      description: 'Live voice settings: voice, colors, animation, end-of-speech silence, interrupt by voice, mute/stop shortcuts',
-      argumentHint: '[test|voice <name>|animation <wave|bars|off>|silence <ms>|interrupt <off|headphones|speakers>|<target> <theme|name|#hex>|keys [apply]|mute <chord>|stop <chord>|reset]',
+      description: 'Live voice settings: voice, colors, animation, end-of-speech silence, interrupt by voice, mute/stop shortcuts, engine, Codex sign-in',
+      argumentHint: '[test|voice <name>|animation <wave|bars|off>|silence <ms>|interrupt <off|headphones|speakers>|<target> <theme|name|#hex>|keys [apply]|mute <chord>|stop <chord>|engine <local|codex>|codex <login|logout|status|voice <name>>|reset]',
       immediate: true,
     })
 
@@ -948,7 +1276,14 @@ export const register: Register = (on, options) => {
 
   on('turn.start', ($, e, next) => {
     const prompt = live.isOn ? claim(live.prompts, e.text) : undefined
-    if (prompt !== undefined) {
+    if (prompt !== undefined && live.engine === 'codex') {
+      forget(prompt)
+      // Voice requests queued while Claude was busy can enter as one turn: it answers them all.
+      const merged = live.prompts.filter(other => other.delegation !== undefined && other.sent !== '' && e.text.includes(other.sent))
+      for (const other of merged) forget(other)
+      const delegations = [prompt, ...merged].flatMap(one => (one.delegation === undefined ? [] : [one.delegation]))
+      live.codexTurns.set(e.turnId, { delegations, pending: '', isNotice: prompt.isNotice === true })
+    } else if (prompt !== undefined) {
       forget(prompt)
       live.turns.set(e.turnId, new SentenceChunker())
       if (prompt.isNotice === true) live.cues.add(e.turnId)
@@ -958,6 +1293,21 @@ export const register: Register = (on, options) => {
   })
 
   on('turn.step', async function* ($, e, next) {
+    // A Codex live turn: a step that calls tools sends its text as silent
+    // progress; the text of the last one is the answer, sent on turn.complete.
+    const codexTurn = e.agentId === undefined ? live.codexTurns.get(e.turnId) : undefined
+    if (codexTurn !== undefined) {
+      const stream = next(e)
+      for await (const chunk of stream) yield chunk
+      const result = await stream.result
+      const text = result.answer.trim()
+      if (text !== '' && live.codexTurns.get(e.turnId) === codexTurn) {
+        if (result.toolUses.length === 0) codexTurn.pending = text
+        else if (!codexTurn.isNotice) for (const id of codexTurn.delegations) await sendCodex($, { type: 'commentary', id, text })
+      }
+
+      return result
+    }
     const chunker = e.agentId === undefined ? live.turns.get(e.turnId) : undefined
     if (chunker === undefined) {
       return yield* next(e)
@@ -981,6 +1331,21 @@ export const register: Register = (on, options) => {
 
   on('turn.complete', async ($, e, next) => {
     if (e.agentId !== undefined) return next(e)
+    const codexTurn = live.codexTurns.get(e.turnId)
+    if (codexTurn !== undefined) {
+      live.codexTurns.delete(e.turnId)
+      const text = e.answer.trim() || codexTurn.pending
+      if (e.reason === 'aborted') {
+        for (const id of codexTurn.delegations) await sendCodex($, { type: 'cancel', id })
+      } else if (codexTurn.isNotice) {
+        if (text !== '') await sendCodex($, { type: 'notice', text })
+      } else {
+        for (const id of codexTurn.delegations) await sendCodex($, { type: 'final', id, text })
+      }
+      if (live.isOn) await publish($)
+
+      return next(e)
+    }
     const chunker = live.turns.get(e.turnId)
     live.turns.delete(e.turnId)
     if (e.reason === 'aborted') {
@@ -1042,13 +1407,9 @@ export const register: Register = (on, options) => {
             hotkey="m"
             action={MUTE_ACTION}
             label={muteLabel}
-            onPress={async () => {
-              live.isMuted = !live.isMuted
-              await writePause($)
-              await publish($)
-            }}
+            onPress={() => toggleMute($)}
           />
-          <Button key="stop" plain hotkey="s" action={STOP_ACTION} label={stopLabel} onPress={() => void silence($)} />
+          <Button key="stop" plain hotkey="s" action={STOP_ACTION} label={stopLabel} onPress={() => void stopVoice($)} />
           <Text dimColor>{BAR}</Text>
           {width >= MIN_WAVE ? (
             <Text color={waveColor} dimColor={isIdle} wrap="truncate-end">
@@ -1081,6 +1442,8 @@ export const register: Register = (on, options) => {
           <Text>Animation       {current.animation}</Text>
           <Text>End silence     {current.silenceMs} ms</Text>
           <Text>Interrupt       {current.interrupt}</Text>
+          <Text>Engine          {current.engine ?? SETTINGS.engine}</Text>
+          <Text>Codex voice     {current.codexVoice ?? SETTINGS.codexVoice}</Text>
           {COLOR_TARGETS.map(target => (
             <Text>
               {COLOR_LABELS[target]} <Text color={now[target]}>●</Text> {now[target]}
@@ -1116,6 +1479,8 @@ export const register: Register = (on, options) => {
     const animationOptions = ANIMATIONS.map(animation => ({ value: animation }))
     const silenceOptions = silences.map(ms => ({ value: String(ms) }))
     const interruptOptions = INTERRUPTS.map(interrupt => ({ value: interrupt }))
+    const engineOptions = ENGINES.map(engine => ({ value: engine }))
+    const codexVoiceOptions = CODEX_VOICES.map(voice => ({ value: voice }))
     const preview = waveFrame(0)
     const stepFine = 'fine'
     const stepCoarse = `coarse (${COARSE})`
@@ -1293,6 +1658,37 @@ export const register: Register = (on, options) => {
         ),
       },
     ]
+    const engineFields: Field[] = [
+      {
+        width: selectWidth('Engine', engineOptions),
+        node: (
+          <Select
+            key="engine"
+            label="Engine"
+            options={engineOptions}
+            value={current.engine ?? SETTINGS.engine}
+            onSelect={(value: string) => {
+              const engine = ENGINES.find(one => one === value)
+              if (engine !== undefined) void setEngine($, engine)
+            }}
+          />
+        ),
+      },
+      {
+        width: selectWidth('Codex voice', codexVoiceOptions),
+        node: (
+          <Select
+            key="codex-voice"
+            label="Codex voice"
+            options={codexVoiceOptions}
+            value={current.codexVoice ?? SETTINGS.codexVoice}
+            onSelect={(value: string) => {
+              if (CODEX_VOICES.includes(value)) void setCodexVoice($, value)
+            }}
+          />
+        ),
+      },
+    ]
     // The band's chords: the suggestions, and a chord set by hand offered as itself.
     const chordOptions = (which: keyof Chords) =>
       selectOptions(
@@ -1344,6 +1740,7 @@ export const register: Register = (on, options) => {
         ))}
         {pack('step', stepFields)}
         {pack('timing', timingFields)}
+        {pack('engine', engineFields)}
         {pack('chords', [{ width: cellWidth('Shortcuts'), node: <Text key="chords-label">Shortcuts</Text> }, ...chordFields])}
         {pack('actions', actionFields)}
       </Box>
