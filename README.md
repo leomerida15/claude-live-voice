@@ -32,6 +32,15 @@ From the prompt of a Claude Code terminal session:
 
 Answer `y` to add the marketplace, then pick a scope.
 
+Or from a shell:
+
+```
+claude plugin marketplace add leomerida15/claude-live-voice
+claude plugin install live-voice@claude-live-voice
+```
+
+Start a new session (or run `/reload-plugins`), then `/live`.
+
 To develop it, load it straight from a checkout:
 
 ```
@@ -133,7 +142,7 @@ There are two engines; `local` is the default.
 
 - **`local`**: `listen.py` records, local Whisper transcribes, Claude answers,
   local Kokoro reads the answer aloud. Free and offline; everything above.
-- **`codex`** (opt-in): OpenAI's realtime voice model (`gpt-live-1-codex`)
+- **`codex`** (opt-in, experimental): OpenAI's realtime voice model (`gpt-live-1-codex`)
   listens and talks, the way [pi-live-codex](https://github.com/brettinternet/pi-extensions)
   does for Pi. It hands every coding request to Claude as a prompt and then
   tells you Claude's answer. Barge-in is the model's own. Whisper and Kokoro
@@ -293,3 +302,7 @@ claude plugin test .
 python3 -I -m unittest discover -s test -p 'test_*.py'
 node --test 'test/codex-live/*.test.mjs'
 ```
+
+## License
+
+[MIT](LICENSE)

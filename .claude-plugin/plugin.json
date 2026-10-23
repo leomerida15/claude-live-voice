@@ -5,6 +5,9 @@
   "author": {
     "name": "leomerida15"
   },
+  "homepage": "https://github.com/leomerida15/claude-live-voice",
+  "repository": "https://github.com/leomerida15/claude-live-voice",
+  "license": "MIT",
   "types": "./types/index.d.ts",
   "userConfig": {
     "voice": {
