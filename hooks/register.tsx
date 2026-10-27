@@ -192,6 +192,9 @@ const live = {
   outLevel: 0,
   commandSeq: 0,
   codexTurns: new Map<string, CodexTurn>(),
+  // Delegations already answered (`final`) or stopped (`cancel {id}`): the
+  // server refuses anything more for them, so nothing more is sent.
+  finishedDelegations: new Set<string>(),
   // The sidecar's `login`, while one runs.
   login: undefined as Child | undefined,
 }
@@ -590,6 +593,11 @@ const sidecarPath = () => `${config.scripts}/codex-live/main.mjs`
 // carry them). The sidecar reads the files in order and deletes them.
 const sendCodex = async ($: $, command: Record<string, unknown>) => {
   if (live.sidecar === undefined) return
+  const { type, id } = command
+  if (typeof id === 'string' && (type === 'commentary' || type === 'final' || type === 'cancel')) {
+    if (live.finishedDelegations.has(id)) return
+    if (type !== 'commentary') live.finishedDelegations.add(id)
+  }
   live.commandSeq += 1
   await $.fs
     .write(codexCommandPath(config.codexDir, live.commandSeq), JSON.stringify(command))
@@ -709,6 +717,7 @@ const startCodex = async ($: $) => {
   live.isReady = false
   live.outLevel = 0
   live.commandSeq = 0
+  live.finishedDelegations.clear()
   live.sidecarReason = ''
   await $.process.run(['rm', '-rf', config.codexDir]).catch(() => undefined)
   await $.process.run(['mkdir', '-p', config.codexDir])

@@ -171,6 +171,12 @@ own tokens in `${XDG_CONFIG_HOME:-~/.config}/live-voice/codex-auth.json` (0600).
   non-trivial files). Test-first (engine kit, fake sidecar).
 - [ ] T30 Live smoke test of the codex engine with the person (real login, real call): unchecked until the
   person runs `docs/smoke-test.md` section 10.
+- [x] T31 Keep the codex session open on server errors (bug from a live session: a `final` for a delegation
+  id the server did not know got "Unknown delegation item id: ...", the sidecar closed and the mod turned live
+  off). Sidecar: a server `error` event is emitted (the mod toasts it) and the session stays open; transport
+  failures (connect, sideband error/close, send while disconnected, microphone failure/stall) stay fatal.
+  Mod: never send `commentary`, `final` or `cancel {id}` to a delegation already finished (after its `final`
+  or `cancel {id}`). Route: delegated direct (writer trigger: 2+ non-trivial files). Test-first.
 
 ## Acceptance criteria
 - `claude plugin validate .` passes; type-check passes; `claude plugin test .` passes.
@@ -584,6 +590,20 @@ Global keybindings, cloud providers (barge-in was out of scope until T26, author
   final; the band Stop asks the realtime voice to stop by commentary (the protocol has no output cancel);
   the Kokoro "Test voice" still works under the Codex engine. Not verified until T30: everything against the
   real endpoint and audio.
+
+- T31 done (route: delegated direct; writer trigger: live.mjs, register.tsx, two test files). RED (sidecar,
+  after adding the `createTransport` seam to `runLive`): `node --test test/codex-live/live.test.mjs` -> 1 fail
+  (a server `error` event emitted `closed`). RED (mod): `claude plugin test .` -> 1 fail (after `final d1`, a
+  repeated d1 still got `commentary` and `final`; after `cancel d2`, d2 still got `final`). GREEN: `node --test
+  'test/codex-live/*.test.mjs'` 26 pass, 0 fail (server error -> `error` emitted, session open, a later command
+  still sent; `onFailure` -> `error` + `closed`, exit 1; a send failure -> exit 1); `claude plugin test .` 159
+  pass, 0 fail. Transport failures now reach `runLive` through a separate `onFailure` callback (Transport's
+  `#fail`); server events keep `onEvent`. The mod drops `commentary`/`final`/`cancel {id}` for ids in
+  `live.finishedDelegations` (filled in `sendCodex` on `final`/`cancel {id}`, cleared on `startCodex`).
+  `claude plugin validate .` passed (expected warnings); `tsc -p .` reports only the pre-existing TS5097 for
+  `./text.ts` (`tsc -p . --allowImportingTsExtensions` clean); python 28 OK; `bash -n scripts/speak.sh` ok.
+  Not verified: a real server error in a live call (T30). Commit: `fix: keep the codex session open on server
+  errors`.
 
 ## Next step
 The human runs `docs/smoke-test.md` with the microphone and reports failed steps. Not verified yet:

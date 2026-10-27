@@ -104,7 +104,9 @@ commands go as numbered JSON files in `<runtime dir>/live-voice/<session>/codex/
 (a spawned child's stdin closes after `input`). A delegation is submitted as a
 live prompt; the turn's tool-step text goes back as `commentary`, its answer as
 `final`, an abort as `cancel {id}`, a system-triggered turn's answer as
-`notice`. The sidecar owns its own sign-in (never read `~/.codex` or `~/.pi`)
+`notice`. Nothing more goes to a delegation after its `final` or `cancel {id}`.
+A server `error` event is only reported (a toast); the session ends only when
+the call itself fails (connect, sideband, send, microphone). The sidecar owns its own sign-in (never read `~/.codex` or `~/.pi`)
 and must never print a token. Tests never run the real login or call.
 
 ## Never change the audio setup

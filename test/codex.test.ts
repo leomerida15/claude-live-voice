@@ -190,6 +190,39 @@ test('a delegation becomes a live Claude turn; its tool-step text is commentary,
   await $.command.run(live('off'))
 })
 
+test('a finished delegation gets no more commentary, final or cancel', SLOW, async ($, on) => {
+  const world = fakeWorld(on)
+  await codexOn($, world)
+  world.codex.send({ type: 'delegation', id: 'd1', text: 'hola' })
+  await settle(world)
+  await claudeTurn($, world, 't1', 'hola', 'Hola.')
+  await complete($, 't1', 'Hola.')
+  await settle(world)
+  // The same id again (the server repeated it): its later answers are not sent.
+  world.codex.send({ type: 'delegation', id: 'd1', text: 'hola otra vez' })
+  await settle(world)
+  await claudeTurn($, world, 't2', 'hola otra vez', 'Miro.', true)
+  await claudeTurn($, world, 't2', 'hola otra vez', 'Otra vez hola.')
+  await complete($, 't2', 'Otra vez hola.')
+  await settle(world)
+  // A delegation closed by cancel gets nothing after it either.
+  world.codex.send({ type: 'delegation', id: 'd2', text: 'espera' })
+  await settle(world)
+  await claudeTurn($, world, 't3', 'espera', 'Uno.')
+  await complete($, 't3', '', true)
+  await settle(world)
+  world.codex.send({ type: 'delegation', id: 'd2', text: 'espera más' })
+  await settle(world)
+  await claudeTurn($, world, 't4', 'espera más', 'Dos.')
+  await complete($, 't4', 'Dos.')
+  await settle(world)
+  expect(commands(world)).toEqual([
+    { type: 'final', id: 'd1', text: 'Hola.' },
+    { type: 'cancel', id: 'd2' },
+  ])
+  await $.command.run(live('off'))
+})
+
 test('the status and cancel controls are answered without a Claude turn', SLOW, async ($, on) => {
   const world = fakeWorld(on)
   await codexOn($, world)

@@ -178,7 +178,7 @@ class Transport {
   #fail(message) {
     if ((this.#state !== 'connecting' && this.#state !== 'connected') || this.#failed) return
     this.#failed = true
-    this.#options.onEvent({ type: 'error', message })
+    this.#options.onFailure(message)
   }
 
   send(message) {
@@ -216,8 +216,9 @@ class Transport {
 /**
  * Runs one live session until it closes: emits events for the mod (`emit`)
  * and takes its commands (`handle`). Resolves with the exit code.
+ * `createTransport` replaces the WebRTC call in tests.
  */
-export function runLive({ natives, getAccess, sessionId, voice, instructions, emit }) {
+export function runLive({ natives, getAccess, sessionId, voice, instructions, emit, createTransport = options => new Transport(natives, options) }) {
   let muted = false
   let closing
   let resolveDone
@@ -235,7 +236,7 @@ export function runLive({ natives, getAccess, sessionId, voice, instructions, em
   let inputTranscript = ''
   let outputTranscript = ''
 
-  const transport = new Transport(natives, {
+  const transport = createTransport({
     getAccess,
     sessionId,
     voice,
@@ -244,6 +245,8 @@ export function runLive({ natives, getAccess, sessionId, voice, instructions, em
       outputLevel = level
     },
     onEvent: event => onEvent(event),
+    // The call itself failed (sideband, peer, binary frame): the session ends.
+    onFailure: message => fail(message),
   })
 
   const sendText = (text, build) => {
@@ -274,8 +277,9 @@ export function runLive({ natives, getAccess, sessionId, voice, instructions, em
         if (text) emit({ type: 'delegation', id: event.item.id, text })
         break
       }
+      // A server error (e.g. an unknown delegation id) leaves the session usable: report it only.
       case 'error':
-        fail(event.message)
+        emit({ type: 'error', message: event.message })
         break
       default:
         break
