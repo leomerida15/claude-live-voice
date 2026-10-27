@@ -270,8 +270,30 @@ test('sidecar errors are toasts; its end turns live voice off', SLOW, async ($, 
   expect(world.toasts).toContain('live-voice: Codex live signaling failed (403): forbidden')
   world.codex.end()
   await settle(world)
-  expect(world.toasts.at(-1)).toBe('live-voice: the Codex session ended; /live on to start it again')
+  // The end's toast replaces the error's: it repeats why.
+  expect(world.toasts.at(-1)).toBe(
+    'live-voice: the Codex session ended (Codex live signaling failed (403): forbidden); /live on to start it again',
+  )
   expect(await status($)).toMatch(/Live voice is off/)
+})
+
+test('a sidecar that dies without an error event names its last stderr line', SLOW, async ($, on) => {
+  const world = fakeWorld(on)
+  await codexOn($, world)
+  world.codex.fail('node:internal/modules/run_main:123\n    triggerUncaughtException(\nError: Cannot find module \'ws\'\n')
+  world.codex.end()
+  await settle(world)
+  expect(world.toasts.at(-1)).toBe(
+    "live-voice: the Codex session ended (Error: Cannot find module 'ws'); /live on to start it again",
+  )
+})
+
+test('a sidecar that ends cleanly keeps the plain notice', SLOW, async ($, on) => {
+  const world = fakeWorld(on)
+  await codexOn($, world)
+  world.codex.end()
+  await settle(world)
+  expect(world.toasts.at(-1)).toBe('live-voice: the Codex session ended; /live on to start it again')
 })
 
 test('codex login runs the sidecar login and reports its progress as toasts; status and logout answer', SLOW, async ($, on) => {

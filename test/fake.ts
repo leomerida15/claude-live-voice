@@ -53,7 +53,14 @@ export type World = {
    * the lines `login` prints, `send` prints one event line from a running
    * `run`, `end` makes that `run` exit.
    */
-  codex: { status: 'signed-in' | 'expired' | 'signed-out'; login: object[]; send: (event: object) => void; end: () => void }
+  codex: {
+    status: 'signed-in' | 'expired' | 'signed-out'
+    login: object[]
+    send: (event: object) => void
+    /** Writes `text` to the sidecar's stderr. */
+    fail: (text: string) => void
+    end: () => void
+  }
 }
 
 /** Whether a spawn or run is the Codex sidecar. */
@@ -71,7 +78,7 @@ export function fakeWorld(on: On, transcript = 'hola mundo'): World {
   const heard: string[] = []
   let wake = () => {}
   // The running sidecar's pending output lines; null ends it.
-  const sidecarOut: (string | null)[] = []
+  const sidecarOut: ({ stream: 'stdout' | 'stderr'; text: string } | null)[] = []
   let wakeSidecar = () => {}
   let releases: (() => void)[] = []
   let stateWrites = 0
@@ -113,7 +120,11 @@ export function fakeWorld(on: On, transcript = 'hola mundo'): World {
       status: 'signed-in',
       login: [],
       send: event => {
-        sidecarOut.push(`${JSON.stringify(event)}\n`)
+        sidecarOut.push({ stream: 'stdout', text: `${JSON.stringify(event)}\n` })
+        wakeSidecar()
+      },
+      fail: text => {
+        sidecarOut.push({ stream: 'stderr', text })
         wakeSidecar()
       },
       end: () => {
@@ -215,7 +226,7 @@ export function fakeWorld(on: On, transcript = 'hola mundo'): World {
           })
           continue
         }
-        yield { stream: 'stdout' as const, text: line }
+        yield line
       }
     }
     const isSpeak = e.argv.some(arg => arg.endsWith('speak.sh'))

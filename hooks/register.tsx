@@ -186,6 +186,8 @@ const live = {
   // The Codex sidecar's `run`, whether its call is up, Claude's voice level in
   // it, the last command file's number, and its live turns by id.
   sidecar: undefined as Child | undefined,
+  // Why the Codex sidecar last failed: its last `error` event or stderr line.
+  sidecarReason: '',
   isReady: false,
   outLevel: 0,
   commandSeq: 0,
@@ -644,6 +646,7 @@ const onSidecarEvent = async ($: $, event: SidecarEvent) => {
       await onDelegation($, event.id, event.text)
       break
     case 'error':
+      live.sidecarReason = event.message
       $.ui.toast(event.code === 'signed-out' ? NOT_SIGNED_IN : `live-voice: ${event.message}`)
       break
     default:
@@ -657,6 +660,11 @@ const readSidecar = async ($: $, child: Child) => {
   let pending = ''
   try {
     for await (const chunk of child) {
+      if (chunk.stream === 'stderr') {
+        const last = chunk.text.split('\n').map(one => one.trim()).filter(one => one !== '').at(-1)
+        if (last !== undefined && live.sidecar === child) live.sidecarReason = last.slice(0, 200)
+        continue
+      }
       if (chunk.stream !== 'stdout') continue
       pending += chunk.text
       let newline = pending.indexOf('\n')
@@ -680,7 +688,9 @@ const readSidecar = async ($: $, child: Child) => {
   if (live.sidecar === child) {
     live.sidecar = undefined
     if (live.isOn) {
-      $.ui.toast('live-voice: the Codex session ended; /live on to start it again')
+      // Names the cause: this toast replaces the error's own.
+      const reason = live.sidecarReason === '' ? '' : ` (${live.sidecarReason})`
+      $.ui.toast(`live-voice: the Codex session ended${reason}; /live on to start it again`)
       await stop($)
     }
   }
@@ -699,6 +709,7 @@ const startCodex = async ($: $) => {
   live.isReady = false
   live.outLevel = 0
   live.commandSeq = 0
+  live.sidecarReason = ''
   await $.process.run(['rm', '-rf', config.codexDir]).catch(() => undefined)
   await $.process.run(['mkdir', '-p', config.codexDir])
   startTicker($)
